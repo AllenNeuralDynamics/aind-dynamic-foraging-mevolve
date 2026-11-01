@@ -7,8 +7,10 @@
         Pass (ADR 0004 of study 40): pooled held-out likelihood within 0.0002 of the reference or
         better, and for at least 95% of subjects a fit-session log likelihood no worse than the
         reference's by more than 0.5 nats.
-    regime "session" (1c): session-level MAP and session marginal against study 13's HB-CTT and
-        HB-Hattori (``ctt_final_runs.json``, ``hattori_final_runs.json``, ``r5_ctt_pooled.json``).
+    regime "session" (1c): session-level fit (Laplace-EM) and session marginal against study 13's
+        HB-CTT and HB-Hattori (``ctt_final_runs.json``, ``hattori_final_runs.json``,
+        ``r5_ctt_pooled.json``). Pass (ADR 0004): each model's pooled score within 0.001 of the
+        reference, and the CompareToThreshold - Hattori2019 gap within 0.0005 of the reference gap.
 
 Writes one JSON per model and regime with every subject's record and the comparison:
 
@@ -36,6 +38,7 @@ HB_RUNS = {"CompareToThreshold": "studies/13-hb-subject-vs-gru-heldout/analysis/
 STUDY12 = "studies/12-cognitive-literature-leaderboard/analysis/per_subject_fits.csv"
 RL_KEY = {"Hattori2019": "hattori", "Bari2019": "bari", "CompareToThreshold": "ctt"}
 POOLED_TOL_1B, FIT_NATS_1B, FIT_SHARE_1B = 0.0002, 0.5, 0.95
+POOLED_TOL_1C, GAP_TOL_1C = 0.001, 0.0005
 
 
 def study12_reference(csv_path: Path, model: str) -> dict:
@@ -63,6 +66,20 @@ def compare_study12(records: list[dict], ref: dict) -> dict:
             "share_fit_within_0.5_nats": share,
             "ok": (pooled - pooled_ref >= -POOLED_TOL_1B and share >= FIT_SHARE_1B and not trials_differ
                    and len(subs) == len(records))}
+
+
+def check_1c(comparisons: dict[str, dict]) -> dict:
+    """Gate 1c from the session-level comparisons by model; the gap needs both models."""
+    out = {m: abs(c["pooled_diff"]) <= POOLED_TOL_1C for m, c in comparisons.items()}
+    if {"CompareToThreshold", "Hattori2019"} <= comparisons.keys():
+        ctt, hat = comparisons["CompareToThreshold"], comparisons["Hattori2019"]
+        gap = ctt["pooled"] - hat["pooled"]
+        gap_ref = ctt["pooled_reference"] - hat["pooled_reference"]
+        out["gap"] = {"gap": gap, "gap_reference": gap_ref, "gap_diff": gap - gap_ref,
+                      "ok": abs(gap - gap_ref) <= GAP_TOL_1C}
+    return out
+
+
 HB_KEY = {"CompareToThreshold": "hb_ctt", "Hattori2019": "hb_hattori"}
 
 
@@ -112,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
             if missing:
                 parser.error(f"{item}: {len(missing)} held-out subjects have no row in {csv_path}")
     subjects = [evaluate.subject_data(freeze, s) for s in freeze.subjects("heldout")]
-    failed = []
+    failed, session = [], {}
     for item in args.model:
         model, _, override = item.partition("=")
         path = Path(override) if override else program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
@@ -126,6 +143,9 @@ def main(argv: list[str] | None = None) -> None:
         else:
             ref_per, ref_pooled, sources = reference(model, args.regime, args.studies)
             comparison = compare(records, ref_per, ref_pooled)
+            if args.regime == "session":
+                comparison["ok"] = check_1c({model: comparison})[model]
+                session[model] = comparison
             source_root = args.studies
         result = {"model": model, "regime": args.regime, "wall_seconds": time.time() - t0,
                   "program_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -137,9 +157,17 @@ def main(argv: list[str] | None = None) -> None:
         c = result["comparison"]
         if not c.get("ok", True):
             failed.append(model)
-        extra = f", fit within 0.5 nats {c['share_fit_within_0.5_nats']:.3f}, {'PASS' if c['ok'] else 'FAIL'}" if "ok" in c else ""
+        extra = f", fit within 0.5 nats {c['share_fit_within_0.5_nats']:.3f}" if "share_fit_within_0.5_nats" in c else ""
+        extra += f", {'PASS' if c['ok'] else 'FAIL'}" if "ok" in c else ""
         print(f"{model} {args.regime}: pooled {c['pooled']:.5f} vs {c['pooled_reference']:.5f} "
               f"(diff {c['pooled_diff']:+.5f}){extra}, wall {result['wall_seconds']:.0f} s", flush=True)
+    gap = check_1c(session).get("gap")
+    if gap:
+        (args.out / "session_gap.json").write_text(json.dumps(gap, indent=1) + "\n")
+        print(f"CompareToThreshold - Hattori2019 gap {gap['gap']:.5f} vs {gap['gap_reference']:.5f} "
+              f"(diff {gap['gap_diff']:+.5f}), {'PASS' if gap['ok'] else 'FAIL'}", flush=True)
+        if not gap["ok"]:
+            failed.append("the CompareToThreshold - Hattori2019 gap")
     if failed:
         sys.exit(f"gate 1 failed for {', '.join(failed)}")
 

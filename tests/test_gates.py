@@ -53,3 +53,15 @@ def test_compare_study12_with_no_reference_rows_fails_cleanly():
     from mevolve.gate1 import compare_study12
     out = compare_study12([{"subject_id": "x", "log_lik": -1.0, "n_trials": 2, "fit_log_lik": -1.0}], {})
     assert out == {"n_subjects": 0, "subjects_missing_from_reference": 1, "ok": False}
+
+
+def test_check_1c_on_the_gate_run_and_a_shifted_gap():
+    from mevolve.gate1 import check_1c
+    ctt = {"pooled": 0.72233, "pooled_reference": 0.72246, "pooled_diff": -0.00013}
+    hat = {"pooled": 0.72093, "pooled_reference": 0.72129, "pooled_diff": -0.00036}
+    out = check_1c({"CompareToThreshold": ctt, "Hattori2019": hat})
+    assert out["CompareToThreshold"] and out["Hattori2019"] and out["gap"]["ok"]
+    low = dict(hat, pooled=0.72060, pooled_diff=-0.00069)          # each within 0.001, gap off by 0.00056
+    out = check_1c({"CompareToThreshold": ctt, "Hattori2019": low})
+    assert out["Hattori2019"] and not out["gap"]["ok"]
+    assert not check_1c({"Hattori2019": dict(hat, pooled_diff=-0.0011)})["Hattori2019"]
