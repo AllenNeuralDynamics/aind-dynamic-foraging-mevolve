@@ -127,3 +127,30 @@ def test_a_program_with_no_parameters_is_rejected(tmp_path):
                     "def update(latents, choice, reward, p): ...\n")
     with pytest.raises(ValueError, match="PARAMS is empty"):
         load(path)
+
+
+ON_BOUND = '''
+import jax.numpy as jnp
+PARAMS = {"a": (0.0, 1.0), "b": (-5.0, 5.0)}
+N_LATENT = 1
+LATENT_NAMES = ("unused",)
+def init_latents(p, session):
+    return jnp.zeros(1)
+def predict(latents, p):
+    # a narrow peak at a = 0 (width about 2e-5) over a broad, worse interior optimum
+    return jnp.array([0.0, 3.0 * jnp.exp(-1e5 * p["a"]) + 0.2 * p["b"]])
+def update(latents, choice, reward, p):
+    return latents
+'''
+
+
+def test_per_subject_fit_reaches_an_optimum_on_a_bound(tmp_path):
+    """Issue #15: an optimum at a = 0 inside a narrow basin, which DE and L-BFGS miss alone."""
+    path = tmp_path / "on_bound.py"
+    path.write_text(ON_BOUND)
+    prog = program.load(path)
+    batch = fitting.pad([Sim(np.ones(200, np.int32), np.zeros(200))])     # always right
+    fit = fitting.fit_per_subject(prog, batch, n_starts=4)
+    assert fit["params"]["a"] < 1e-6 and fit["params"]["b"] > 4.99
+    assert fit["nll"] == pytest.approx(-200 * np.log(jax.nn.sigmoid(4.0)), rel=1e-6)
+    assert np.min(fit["nll_starts"]) > fit["nll"] + 50          # the interior starts stay behind
