@@ -35,12 +35,16 @@ the session's index in the subject's history.
 _Avoid_: metadata, covariates
 
 **Seed program**:
-A program that starts a search, such as a published model rewritten in program form.
+A program that starts a search, such as a literature model rewritten in program form.
 _Avoid_: initial program
 
+**Literature model**:
+A cognitive model from the literature, as implemented in `aind-dynamic-foraging-models` and fitted per
+subject by study 12, which defines the term.
+_Avoid_: published model, author model
+
 **Seed library**:
-The published models of `aind-dynamic-foraging-models` rewritten as programs, each checked against
-its original.
+Study 12's 19 literature models rewritten as programs, each checked against its original.
 
 ### Fitting and scoring
 
