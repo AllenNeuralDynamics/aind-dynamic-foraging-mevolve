@@ -156,9 +156,43 @@ def test_per_subject_fit_reaches_an_optimum_on_a_bound(tmp_path):
     assert np.min(fit["nll_starts"]) > fit["nll"] + 50          # the interior starts stay behind
 
 
-def test_each_de_restart_contributes_starts(data):
-    """Issue #17: the L-BFGS starts come from every DE restart, two from each by default."""
+
+def test_each_de_restart_contributes_its_best_members(data, monkeypatch):
+    """Issue #17: every DE restart runs with its own seed, and its best members (at least one)
+    reach L-BFGS. A fake DE returns a distinct population per seed, best member first."""
+    import scipy.optimize
+    from types import SimpleNamespace
+
     prog, batch = data
-    fit = fitting.fit_per_subject(prog, batch, n_starts=4, de_restarts=2, de_generations=10)
-    assert len(fit["nll_starts"]) == 4 and len(fit["nll_faces"]) == 2 * len(prog.params)
-    assert len(fitting.fit_per_subject(prog, batch, n_starts=2, de_restarts=4, de_generations=5)["nll_starts"]) == 4
+    lo, hi = (np.asarray(a) for a in fitting.bounds_arrays(prog))
+
+    def population(seed):
+        return lo + (hi - lo) * np.random.default_rng(seed).uniform(0.2, 0.8, (6, len(lo)))
+
+    seeds, x0s = [], []
+
+    def fake_de(func, bounds, seed, **kwargs):
+        seeds.append(seed)
+        return SimpleNamespace(population=population(seed), population_energies=np.arange(6.0))
+
+    real_solver = fitting._solver
+
+    def recording_solver(program, kind, max_iter):
+        solve = real_solver(program, kind, max_iter)
+        if kind != "subject":
+            return solve
+
+        def record(x0, *args):
+            x0s.append(np.asarray([float(v) for v in fitting.to_params(program, x0).values()]))
+            return solve(x0, *args)
+        return record
+
+    monkeypatch.setattr(scipy.optimize, "differential_evolution", fake_de)
+    monkeypatch.setattr(fitting, "_solver", recording_solver)
+    for n_starts, restarts, per_run in ((4, 2, 2), (2, 4, 1)):
+        seeds.clear(), x0s.clear()
+        fit = fitting.fit_per_subject(prog, batch, n_starts=n_starts, de_restarts=restarts, seed=10, polish=False)
+        assert seeds == [10 + r for r in range(restarts)]
+        expected = np.vstack([population(10 + r)[:per_run] for r in range(restarts)])
+        assert np.allclose(np.vstack(x0s[:len(expected)]), expected, atol=1e-9)
+        assert len(fit["nll_starts"]) == len(expected)
