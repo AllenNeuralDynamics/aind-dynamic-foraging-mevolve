@@ -28,6 +28,19 @@ inflating σ.
 With 256 draws the scorer read up to 0.0009 low, even with study 13's own μ and σ: the log of an
 average over few draws is biased low. Hence 2,048 draws, with the weight ESS reported per session.
 
+**Iterations.** EM converges linearly, but the held-out score settles long before the spreads of
+poorly identified parameters do. The search caps EM at 20 iterations so that one evaluation of
+the generation and validation subjects (96) stays under about 3 minutes on a 112-core node (gate
+2: 103 to 145 s for the literature models tried). On the 149 test subjects the cap costs little:
+
+| session level, 149 test subjects | 100 iterations | 20 iterations | study 13 HB |
+|---|---|---|---|
+| CompareToThreshold | 0.72234 | 0.72233 | 0.72246 |
+| Hattori2019 | 0.72111 | 0.72093 | 0.72129 |
+
+Both pass gate 1c either way. Scores that are reported, not ranked, such as the pre-registered
+programs on the test subjects, run EM to convergence (``max_em=100``).
+
 ## Considered options
 
 - **The full posterior (NUTS), as study 13.** The reference, but about 650 s per subject: too slow
