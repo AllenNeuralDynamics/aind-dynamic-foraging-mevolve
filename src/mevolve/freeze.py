@@ -8,8 +8,12 @@ database package, with the wrapper checkout's ``code/`` directory on ``sys.path`
 
 The split comes from ``resolve_mice_snapshot_session_split_manifest``, the wrapper's rebuild of
 the trainer's split, so the fit and score sessions are the ones every comparator used. Trials come
-from ``load_mice_from_database`` with the same settings. Every trial is kept, ignored ones as
-response 2, so that the evaluator, not the freeze, applies the ignore policy.
+from ``load_mice_from_database`` with the same settings. Every trial of every session in the
+wrapper's split is kept, ignored ones as response 2, so that the evaluator, not the freeze, applies
+the ignore policy within a session. Sessions whose trials were all ignored are not in the split
+(the wrapper's ``_align_raw_df_with_valid_sessions`` drops them before numbering sessions), so
+they are not in the freeze either: keeping them would shift no index but would add sessions no
+comparator saw.
 
 Writes ``trials.parquet``, ``sessions.parquet`` and ``manifest.json`` to ``--out``. Nothing here
 belongs in the repo: the freeze lives on scratch and study 40 records its digests.

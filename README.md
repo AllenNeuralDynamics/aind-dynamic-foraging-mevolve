@@ -19,13 +19,16 @@ pytest -m "not data"                     # unit tests, no data needed
 clean and at the commit the comparators ran:
 
 ```bash
+conda activate dynamic-foraging-bfm-cpu      # the freeze only
 PYTHONPATH=src python -m mevolve.freeze --wrapper <wrapper checkout> --out <scratch>/freeze/20260603
+conda activate mevolve                       # everything else
 python -m mevolve.gate0 --freeze <scratch>/freeze/20260603 --studies <studies checkout>
 python -m mevolve.cohorts --freeze <scratch>/freeze/20260603 --studies <studies checkout> \
     --seed <seed> --size generation=48 --size validation=48 --size selection=100 --out cohorts.json
 ```
 
-The freeze holds every trial (ignored ones as response 2), each session's pool, fit or score
+The freeze holds every trial of every session in the wrapper's split (ignored ones as response 2;
+sessions with only ignored trials are not in the split), each session's pool, fit or score
 role, date-order index, task and stage, and a manifest with the settings, the wrapper commit and
 file digests. It lives on scratch, never in this repo; study 40 records its digests and its cohort
 lists.
