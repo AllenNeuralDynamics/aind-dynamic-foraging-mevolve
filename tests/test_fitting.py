@@ -117,3 +117,13 @@ def test_a_zero_probability_costs_what_the_reference_charges():
     batch = fitting.pad(sim)
     nll = float(fitting.per_subject_nll(prog, batch)(x))
     assert nll < 100        # 0.5 on trial 0, then zero-probability stays at -log(1e-16) each, not 691
+
+
+def test_a_program_with_no_parameters_is_rejected(tmp_path):
+    from mevolve.program import load
+    path = tmp_path / "fixed.py"
+    path.write_text("PARAMS = {}\nN_LATENT = 0\nLATENT_NAMES = ()\n"
+                    "def init_latents(p, session): ...\ndef predict(latents, p): ...\n"
+                    "def update(latents, choice, reward, p): ...\n")
+    with pytest.raises(ValueError, match="PARAMS is empty"):
+        load(path)

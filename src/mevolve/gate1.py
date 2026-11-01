@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -111,6 +112,7 @@ def main(argv: list[str] | None = None) -> None:
             if missing:
                 parser.error(f"{item}: {len(missing)} held-out subjects have no row in {csv_path}")
     subjects = [evaluate.subject_data(freeze, s) for s in freeze.subjects("heldout")]
+    failed = []
     for item in args.model:
         model, _, override = item.partition("=")
         path = Path(override) if override else program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
@@ -130,11 +132,16 @@ def main(argv: list[str] | None = None) -> None:
                   "freeze_manifest_sha256": hashlib.sha256((args.freeze / "manifest.json").read_bytes()).hexdigest(),
                   "sources": [{"path": p, "sha256": hashlib.sha256((source_root / p).read_bytes()).hexdigest()} for p in sources],
                   "comparison": comparison, "subjects": records}
-        (args.out / f"{args.regime}_{program.load(path).name}.json").write_text(json.dumps(result, indent=1) + "\n")
+        out = args.out / f"{args.regime}_{model}_{program.load(path).name}.json"   # reference, candidate
+        out.write_text(json.dumps(result, indent=1) + "\n")
         c = result["comparison"]
+        if not c.get("ok", True):
+            failed.append(model)
         extra = f", fit within 0.5 nats {c['share_fit_within_0.5_nats']:.3f}, {'PASS' if c['ok'] else 'FAIL'}" if "ok" in c else ""
         print(f"{model} {args.regime}: pooled {c['pooled']:.5f} vs {c['pooled_reference']:.5f} "
               f"(diff {c['pooled_diff']:+.5f}){extra}, wall {result['wall_seconds']:.0f} s", flush=True)
+    if failed:
+        sys.exit(f"gate 1 failed for {', '.join(failed)}")
 
 
 if __name__ == "__main__":

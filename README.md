@@ -34,9 +34,10 @@ file digests. It lives on scratch, never in this repo; study 40 records its dige
 lists.
 
 **Programs and the evaluator (build steps 3 and 2).** A program is one Python file defining
-`PARAMS`, `N_LATENT`, `LATENT_NAMES`, `init_latents`, `predict` and `update`
-(`src/mevolve/program.py`); the literature models are in `src/mevolve/programs/literature/`. The
-evaluator fits a program per subject (multi-start L-BFGS) or at the session level (Laplace-EM,
+`PARAMS` (at least one fitted parameter), `N_LATENT`, `LATENT_NAMES`, `init_latents`, `predict` and
+`update` (`src/mevolve/program.py`); the literature models are in `src/mevolve/programs/literature/`.
+The evaluator fits a program per subject (differential evolution, then L-BFGS and Nelder-Mead) or
+at the session level (Laplace-EM,
 [ADR 0004](docs/adr/0004-session-level-by-laplace-em.md)) and scores held-out sessions, one
 single-threaded process per subject. The gates run as SLURM jobs on a compute node:
 

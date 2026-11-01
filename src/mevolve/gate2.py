@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -82,6 +83,8 @@ def main(argv: list[str] | None = None) -> None:
                          for a, b in itertools.combinations(args.model, 2)}}
     args.out.write_text(json.dumps(report, indent=1) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k in ("deterministic", "paired")}, indent=1))
+    if not report["deterministic"]:
+        sys.exit("gate 2 failed: the repeated evaluation gave a different score")
 
 
 if __name__ == "__main__":
