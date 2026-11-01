@@ -70,7 +70,8 @@ def main(argv: list[str] | None = None) -> None:
                 _, clamped = literature.fit_spec(name)
                 per_subject = {s: {k: v for k, v in fitted[s].items() if k not in clamped} for s in subjects}
             else:
-                rng = np.random.default_rng([args.seed, models.index(name)])
+                # seeded by the model's place in the whole library, so a rerun of one model draws the same
+                rng = np.random.default_rng([args.seed, list(literature.LITERATURE).index(name)])
                 per_subject = {s: parity.draw_params(name, rng) for s in subjects}
             jobs = [(name, s, [x.choices for x in sessions[s]], [x.rewards for x in sessions[s]], per_subject[s])
                     for s in subjects]

@@ -30,16 +30,22 @@ REFERENCE_SOFTMAX = {"Hattori2019", "Bari2019", "ActorCritic"}   # choose via ac
 
 @lru_cache(maxsize=None)
 def _program(name: str):
-    """The program and a jitted replay that also returns the largest logit on each trial."""
+    """The program and its jitted replay."""
     prog = program.literature(literature.LITERATURE[name][0])
+    return prog, jax.jit(lambda p, choices, rewards: program.replay(prog, p, choices, rewards)[0])
 
-    @jax.jit
-    def run(p, choices, rewards):
-        probs, latents = program.replay(prog, p, choices, rewards)
-        logits = jax.vmap(lambda lat: prog.predict(lat, p))(latents)
-        return probs, logits.max(axis=1)
 
-    return prog, run
+def _reference_max_logit(name: str, ref) -> np.ndarray:
+    """The largest logit the reference's ``act_softmax`` saw on each trial of the session it just
+    replayed, from its own latent variables: beta * (Q or actor preference) + bias, plus Bari2019's
+    choice kernel term."""
+    p = ref.params
+    bias = np.array([p.biasL, 0.0])[:, None]
+    latent = ref.actor_preference if name == "ActorCritic" else ref.q_value
+    x = p.softmax_inverse_temperature * latent[:, :-1] + bias
+    if name == "Bari2019":
+        x = x + p.softmax_inverse_temperature * p.choice_kernel_relative_weight * ref.choice_kernel[:, :-1]
+    return x.max(axis=0)
 
 
 def pooled_likelihood(probs: list[np.ndarray], choices: list[np.ndarray], keep: list[np.ndarray] | None = None) -> float:
@@ -59,15 +65,18 @@ def compare(name: str, params: dict[str, float], choices: list[np.ndarray], rewa
     """Replay one literature model both ways on the same sessions, at the same parameters."""
     _, clamped = literature.fit_spec(name)
     ref = literature.oracle(name, params={**params, **clamped})
-    ref_probs = [np.asarray(p).T for p in ref.perform_closed_loop_multi_session(choices, rewards)]
+    ref_probs, keep = [], []
+    for c, r in zip(choices, rewards):      # perform_closed_loop_multi_session, one session at a time
+        ref.perform_closed_loop(c, r)
+        ref_probs.append(ref.choice_prob.copy().T)
+        # From the reference's first trial past the limit to the session's end: ActorCritic learns
+        # from the choice probability it used, so one random trial changes every later one. A
+        # program whose own logits overflow where the reference's do not still fails.
+        keep.append(np.ones(len(c), bool) if name not in REFERENCE_SOFTMAX
+                    else np.cumsum(_reference_max_logit(name, ref) > SOFTMAX_LIMIT) == 0)
     _, run = _program(name)
     p = {k: np.float64(v) for k, v in params.items()}
-    out = [run(p, c.astype(np.int32), r.astype(np.float64)) for c, r in zip(choices, rewards)]
-    prog_probs = [np.asarray(o[0]) for o in out]
-    # From the first trial past the limit to the end of the session: ActorCritic learns from the
-    # choice probability it used, so one random trial changes every later one.
-    keep = [np.ones(len(c), bool) if name not in REFERENCE_SOFTMAX
-            else np.cumsum(np.asarray(o[1]) > SOFTMAX_LIMIT) == 0 for c, o in zip(choices, out)]
+    prog_probs = [np.asarray(run(p, c.astype(np.int32), r.astype(np.float64))) for c, r in zip(choices, rewards)]
     diff = max((float(np.max(np.abs(a - b)[k])) if k.any() else 0.0) for a, b, k in zip(ref_probs, prog_probs, keep))
     pooled_ref = pooled_likelihood(ref_probs, choices, keep)
     pooled_prog = pooled_likelihood(prog_probs, choices, keep)

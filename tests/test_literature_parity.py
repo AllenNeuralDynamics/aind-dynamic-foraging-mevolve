@@ -4,7 +4,7 @@ import pytest
 
 from mevolve import literature, parity, program
 
-AVAILABLE = [n for n, (f, _, _) in literature.LITERATURE.items() if (program.LITERATURE_DIR / f"{f}.py").exists()]
+AVAILABLE = list(literature.LITERATURE)     # every registered model: a missing program fails
 
 
 @pytest.mark.parametrize("name", AVAILABLE)
@@ -20,3 +20,19 @@ def test_program_matches_reference(name):
     for _ in range(5):
         result = parity.compare(name, parity.draw_params(name, rng), choices, rewards)
         assert result["ok"], result
+
+
+def test_reference_logits_match_the_programs_on_softmax_models():
+    """The exclusion rule reads the reference's logits; on ordinary draws they equal the program's."""
+    from mevolve.parity import _reference_max_logit
+    rng = np.random.default_rng(1)
+    choices, rewards = parity.synthetic_sessions(rng, n_sessions=1)
+    for name in parity.REFERENCE_SOFTMAX:
+        params = parity.draw_params(name, rng)
+        _, clamped = literature.fit_spec(name)
+        ref = literature.oracle(name, params={**params, **clamped})
+        ref.perform_closed_loop(choices[0], rewards[0])
+        prog = program.literature(literature.LITERATURE[name][0])
+        _, latents = program.replay(prog, params, choices[0], rewards[0])
+        ours = np.asarray([np.max(prog.predict(lat, {k: np.float64(v) for k, v in params.items()})) for lat in latents])
+        assert np.allclose(_reference_max_logit(name, ref), ours, atol=1e-6)
