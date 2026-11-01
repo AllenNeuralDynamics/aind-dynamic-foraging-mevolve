@@ -26,6 +26,7 @@ from jax.scipy.stats import norm
 from .program import Program, SESSION_FACTS
 
 LOG_SIGMA_PRIOR = (-1.0, 1.0)   # mean and sd of log sigma (study 13's fixed hyperprior)
+ABANDON_NATS = 100.0            # multi-start: drop a start this far behind the best so far
 
 
 @dataclass(frozen=True)
@@ -117,30 +118,63 @@ def batch_logp(program: Program, x: jnp.ndarray, batch: Batch) -> jnp.ndarray:
     return jax.vmap(one)(xs, batch.choices, batch.rewards, facts)
 
 
-def lbfgs(fun, x0, max_iter: int = 300, tol: float = 1e-7):
-    """Minimize ``fun`` from ``x0`` with optax's L-BFGS and zoom line search; returns (x, value)."""
+def lbfgs(fun, x0, max_iter: int = 300, tol: float = 1e-7, abandon: float = jnp.inf, patience: int = 30):
+    """Minimize ``fun`` from ``x0`` with optax's L-BFGS and zoom line search; returns (x, value).
+
+    A start still above ``abandon`` after ``patience`` iterations stops early: in a multi-start fit
+    it cannot win, and one such start would otherwise run all ``max_iter`` iterations.
+    """
     opt = optax.lbfgs()
     value_and_grad = optax.value_and_grad_from_state(fun)
 
     def step(carry):
-        x, state, _, i = carry
+        x, state, _, _, i = carry
         value, grad = value_and_grad(x, state=state)
         updates, state = opt.update(grad, state, x, value=value, grad=grad, value_fn=fun)
-        return optax.apply_updates(x, updates), state, jnp.linalg.norm(grad), i + 1
+        return optax.apply_updates(x, updates), state, jnp.linalg.norm(grad), value, i + 1
 
     def keep_going(carry):
-        _, _, gnorm, i = carry
-        return (i == 0) | ((i < max_iter) & (gnorm > tol))
+        _, _, gnorm, value, i = carry
+        return (i == 0) | ((i < max_iter) & (gnorm > tol) & ((i < patience) | (value <= abandon)))
 
-    x, _, _, _ = jax.lax.while_loop(keep_going, step, (x0, opt.init(x0), jnp.inf, 0))
+    x, _, _, _, _ = jax.lax.while_loop(keep_going, step, (x0, opt.init(x0), jnp.inf, jnp.inf, 0))
     return x, fun(x)
+
+
+def _nll(program: Program, x, choices, rewards, mask, facts):
+    batch = Batch(choices, rewards, mask, facts)
+    return -jnp.sum(jnp.where(mask, batch_logp(program, x, batch), 0.0))
 
 
 def per_subject_nll(program: Program, batch: Batch):
     """The per-subject objective: negative log likelihood of all fit sessions at one parameter set."""
-    def fun(x):
-        return -jnp.sum(jnp.where(batch.mask, batch_logp(program, x, batch), 0.0))
-    return fun
+    return lambda x: _nll(program, x, batch.choices, batch.rewards, batch.mask, batch.facts)
+
+
+_SOLVERS: dict = {}
+
+
+def _solver(program: Program, kind: str, max_iter: int):
+    """A jitted L-BFGS solve for one program, compiled once per array shape; the data are
+    arguments, not closed-over constants. One start or one session per call, in a Python loop:
+    under vmap or lax.map the nested line-search loops ran 20 times slower."""
+    key = (id(program), kind, max_iter)
+    if key not in _SOLVERS:
+        if kind == "subject":
+            def solve(x0, c, r, m, f, abandon):
+                return lbfgs(lambda x: _nll(program, x, c, r, m, f), x0, max_iter, abandon=abandon)
+        else:
+            def solve(t0, c, r, m, f, mu, sigma):
+                def fun(t):
+                    logp = trial_logp(program, to_params(program, t), c, r, f)
+                    return -jnp.sum(jnp.where(m, logp, 0.0)) + 0.5 * jnp.sum(((t - mu) / sigma) ** 2)
+                t, _ = lbfgs(fun, t0, max_iter)
+                h = jax.hessian(fun)(t)
+                w, v = jnp.linalg.eigh(0.5 * (h + h.T))
+                cov = (v / jnp.maximum(w, 1e-8)) @ v.T      # a guard where the Hessian is not positive
+                return t, jnp.diag(cov)
+        _SOLVERS[key] = jax.jit(solve)
+    return _SOLVERS[key]
 
 
 def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int = 0, max_iter: int = 300):
@@ -148,10 +182,17 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
 
     Returns the best unconstrained vector, its parameters and its negative log likelihood.
     """
-    fun = per_subject_nll(program, batch)
     n = len(program.params)
     starts = jnp.concatenate([jnp.zeros((1, n)), jax.random.normal(jax.random.PRNGKey(seed), (n_starts - 1, n))])
-    xs, values = jax.jit(jax.vmap(lambda x0: lbfgs(fun, x0, max_iter)))(starts)
+    solve = _solver(program, "subject", max_iter)
+    out, best = [], np.inf
+    for x0 in starts:      # a start 100 nats behind the best so far after 30 iterations is dropped
+        x, value = solve(x0, batch.choices, batch.rewards, batch.mask, batch.facts, best + ABANDON_NATS)
+        out.append((x, value))
+        if np.isfinite(float(value)):
+            best = min(best, float(value))
+    xs = jnp.stack([o[0] for o in out])
+    values = jnp.stack([o[1] for o in out])
     values = jnp.where(jnp.isfinite(values), values, jnp.inf)
     best = int(jnp.argmin(values))
     return {"x": xs[best], "params": {k: float(v) for k, v in to_params(program, xs[best]).items()},
@@ -159,21 +200,16 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
 
 
 def _session_map(program: Program, batch: Batch, mu, sigma, theta0, max_iter: int):
-    """E-step: each session's MAP under N(mu, sigma^2), and the diagonal of its Laplace covariance."""
-    facts = {k: batch.facts[k] for k in SESSION_FACTS}
-
-    def one(t0, c, r, m, f):
-        def fun(t):
-            logp = trial_logp(program, to_params(program, t), c, r, f)
-            return -jnp.sum(jnp.where(m, logp, 0.0)) + 0.5 * jnp.sum(((t - mu) / sigma) ** 2)
-
-        t, _ = lbfgs(fun, t0, max_iter)
-        h = jax.hessian(fun)(t)
-        w, v = jnp.linalg.eigh(0.5 * (h + h.T))
-        cov = (v / jnp.maximum(w, 1e-8)) @ v.T          # a guard where the Hessian is not positive
-        return t, jnp.diag(cov)
-
-    return jax.vmap(one)(theta0, batch.choices, batch.rewards, batch.mask, facts)
+    """E-step: each live session's MAP under N(mu, sigma^2), and the diagonal of its Laplace
+    covariance. Padded sessions keep their start and a zero variance."""
+    solve = _solver(program, "session", max_iter)
+    live = np.asarray(batch.mask.any(axis=1))
+    theta, var = np.array(theta0), np.zeros(theta0.shape)
+    for i in np.flatnonzero(live):
+        f = {k: batch.facts[k][i] for k in SESSION_FACTS}
+        t, v = solve(theta0[i], batch.choices[i], batch.rewards[i], batch.mask[i], f, mu, sigma)
+        theta[i], var[i] = np.asarray(t), np.asarray(v)
+    return jnp.asarray(theta), jnp.asarray(var)
 
 
 def _m_step(theta, var, live, log_sigma):
@@ -191,16 +227,22 @@ def _m_step(theta, var, live, log_sigma):
     return mu, u
 
 
-def fit_session_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_em: int = 100,
+def fit_session_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_em: int = 20,
                       tol: float = 1e-3, inner_iter: int = 50):
-    """Typical values ``mu`` and log spreads by Laplace-EM, started from a per-subject fit."""
+    """Typical values ``mu`` and log spreads by Laplace-EM, started from a per-subject fit.
+
+    EM converges linearly, but the held-out score settles long before the spreads of poorly
+    identified parameters do: on two of the slowest test subjects, 10 iterations scored within
+    2e-5 of 100. Hence at most 20.
+    """
     n_s, n = batch.choices.shape[0], len(program.params)
     live = batch.mask.any(axis=1)
 
-    @jax.jit
+    m_step = jax.jit(_m_step)
+
     def em_step(mu, log_sigma, theta):
         theta, var = _session_map(program, batch, mu, jnp.exp(log_sigma), theta, inner_iter)
-        mu_new, log_sigma_new = _m_step(theta, var, live, log_sigma)
+        mu_new, log_sigma_new = m_step(theta, var, live, log_sigma)
         return mu_new, log_sigma_new, theta
 
     mu, log_sigma = jnp.asarray(x_start), jnp.full(n, LOG_SIGMA_PRIOR[0])

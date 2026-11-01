@@ -84,7 +84,7 @@ def test_session_level_recovers_a_known_spread():
         sessions += simulate(prog, p, rng, n_sessions=1, n_trials=400)
     batch = fitting.pad(sessions)
     per = fitting.fit_per_subject(prog, batch, n_starts=2)
-    sl = fitting.fit_session_level(prog, batch, per["x"])
+    sl = fitting.fit_session_level(prog, batch, per["x"], max_em=100)
     sigma = np.exp(np.asarray(sl["log_sigma"]))
     assert sl["converged"]
     assert 0.3 < sigma[0] < 1.2, sigma
