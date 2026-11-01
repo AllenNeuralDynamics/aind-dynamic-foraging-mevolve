@@ -12,6 +12,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import time
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -51,7 +52,8 @@ def _evaluate_one(args) -> dict:
         p_right = scoring.point_p_right(prog, per["x"], score_batch)
     else:
         sl = fitting.fit_session_level(prog, fit_batch, per["x"])
-        key = jax.random.PRNGKey(seed + int(data.subject_id) % 100_000)   # common draws per subject
+        # common random draws per subject, from a stable hash of its id
+        key = jax.random.PRNGKey(seed + zlib.crc32(data.subject_id.encode()) % 100_000)
         m = scoring.marginal_scores(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
         ll, n = m["log_lik"], m["n_trials"]
         p_right = scoring.marginal_p_right(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)

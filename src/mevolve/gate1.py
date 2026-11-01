@@ -48,6 +48,8 @@ def study12_reference(csv_path: Path, model: str) -> dict:
 
 def compare_study12(records: list[dict], ref: dict) -> dict:
     subs = [r for r in records if r["subject_id"] in ref]
+    if not subs:
+        return {"n_subjects": 0, "subjects_missing_from_reference": len(records), "ok": False}
     pooled = float(np.exp(sum(r["log_lik"] for r in subs) / sum(r["n_trials"] for r in subs)))
     pooled_ref = float(np.exp(sum(ref[r["subject_id"]]["eval_ll"] for r in subs) / sum(ref[r["subject_id"]]["eval_n"] for r in subs)))
     fit_gap = np.array([r["fit_log_lik"] - ref[r["subject_id"]]["fit_ll"] for r in subs])
@@ -101,6 +103,13 @@ def main(argv: list[str] | None = None) -> None:
     args.studies = args.studies.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
     freeze = Freeze(args.freeze)
+    if args.regime == "subject" and args.reference == "study12":   # check coverage before any fit
+        csv_path = (args.study12_csv or args.studies / STUDY12).resolve()
+        for item in args.model:
+            ref = study12_reference(csv_path, item.partition("=")[0])
+            missing = set(freeze.subjects("heldout")) - set(ref)
+            if missing:
+                parser.error(f"{item}: {len(missing)} held-out subjects have no row in {csv_path}")
     subjects = [evaluate.subject_data(freeze, s) for s in freeze.subjects("heldout")]
     for item in args.model:
         model, _, override = item.partition("=")

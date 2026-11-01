@@ -28,20 +28,23 @@ from .data import Freeze
 def paired_se(a: list[dict], b: list[dict]) -> dict:
     """Score difference (x100) between two programs on the same subjects, and its standard error.
 
-    The score is 100 exp(sum LL / sum N). The difference in mean log likelihood per trial,
-    D = sum d_i / sum N_i with d_i = LL_a,i - LL_b,i, is a ratio estimator; with subjects as the
-    unit its variance is n var(d_i - D N_i) / (sum N)^2, so a subject's length alone adds nothing.
-    The delta method carries it to the score scale.
+    Each score is 100 exp(m) with m = sum LL_i / sum N_i, a ratio estimator. With subjects as the
+    unit, the influence of subject i on m is (LL_i - m N_i) / sum N, so a subject's length alone
+    adds nothing; the joint delta method over (m_a, m_b), with their covariance, carries both to
+    the score difference 100 (exp(m_a) - exp(m_b)).
     """
-    da = {r["subject_id"]: r["log_lik"] for r in a}
+    la = {r["subject_id"]: r["log_lik"] for r in a}
     n_i = np.array([r["n_trials"] for r in b], dtype=float)
-    d = np.array([da[r["subject_id"]] - r["log_lik"] for r in b])          # a - b per subject
+    ll_a = np.array([la[r["subject_id"]] for r in b])
+    ll_b = np.array([r["log_lik"] for r in b])
     n_tot = n_i.sum()
-    big_d = d.sum() / n_tot
-    mean_ll = sum(r["log_lik"] for r in a) / n_tot
-    diff = 100 * (np.exp(mean_ll) - np.exp(mean_ll - big_d))
-    se = 100 * np.exp(mean_ll) * np.sqrt(len(d) * np.var(d - big_d * n_i, ddof=1)) / n_tot
-    return {"score_diff_x100": float(diff), "se_x100": float(se), "n_subjects": len(d)}
+    m_a, m_b = ll_a.sum() / n_tot, ll_b.sum() / n_tot
+    infl = np.stack([ll_a - m_a * n_i, ll_b - m_b * n_i]) / n_tot          # (2, n_subjects)
+    cov = len(n_i) * np.cov(infl, ddof=1)
+    grad = 100 * np.array([np.exp(m_a), -np.exp(m_b)])
+    diff = 100 * (np.exp(m_a) - np.exp(m_b))
+    se = float(np.sqrt(max(grad @ cov @ grad, 0.0)))
+    return {"score_diff_x100": float(diff), "se_x100": float(se), "n_subjects": len(n_i)}
 
 
 def main(argv: list[str] | None = None) -> None:

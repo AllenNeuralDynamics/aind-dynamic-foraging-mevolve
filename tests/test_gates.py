@@ -17,11 +17,12 @@ def test_compare_pools_by_trials_and_diffs_per_subject():
     assert c["subjects_worse_than_reference_by_0.005"] == []
 
 
-def test_paired_se_is_zero_for_a_constant_shift_and_signs_a_minus_b():
-    a = [_rec(str(i), -100.0 - i, 200) for i in range(10)]
-    b = [_rec(str(i), -110.0 - i, 200) for i in range(10)]
+def test_paired_se_counts_the_baselines_variation():
+    """Review case: three 100-trial subjects, A at -30, -50, -70 and B 5 lower each."""
+    a = [_rec(str(i), ll, 100) for i, ll in enumerate((-30.0, -50.0, -70.0))]
+    b = [_rec(str(i), ll - 5.0, 100) for i, ll in enumerate((-30.0, -50.0, -70.0))]
     out = paired_se(a, b)
-    assert out["score_diff_x100"] > 0 and out["se_x100"] == pytest.approx(0.0, abs=1e-12)
+    assert out["score_diff_x100"] > 0 and out["se_x100"] == pytest.approx(0.342, abs=0.01)
 
 
 def test_paired_se_ignores_subject_length():
@@ -46,3 +47,9 @@ def test_compare_study12_fails_on_missing_reference_subjects():
     ref = {"0": {"eval_ll": -60.0, "eval_n": 100, "fit_ll": -70.0}}
     out = compare_study12(recs, ref)
     assert not out["ok"] and out["subjects_missing_from_reference"] == 2
+
+
+def test_compare_study12_with_no_reference_rows_fails_cleanly():
+    from mevolve.gate1 import compare_study12
+    out = compare_study12([{"subject_id": "x", "log_lik": -1.0, "n_trials": 2, "fit_log_lik": -1.0}], {})
+    assert out == {"n_subjects": 0, "subjects_missing_from_reference": 1, "ok": False}
