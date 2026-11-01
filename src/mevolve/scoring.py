@@ -36,7 +36,7 @@ def point_scores(program: Program, x: jnp.ndarray, batch: Batch) -> tuple[np.nda
 
 
 def marginal_scores(program: Program, mu: jnp.ndarray, log_sigma: jnp.ndarray, batch: Batch,
-                    key: jax.Array, n_draws: int = 256) -> dict[str, np.ndarray]:
+                    key: jax.Array, n_draws: int = 2048) -> dict[str, np.ndarray]:
     """Per-session session-marginal log likelihood, trial count and weight ESS.
 
     The ESS of the final weights (proportional to each draw's whole-session likelihood) says how
@@ -69,7 +69,7 @@ def point_p_right(program: Program, x: jnp.ndarray, batch: Batch) -> np.ndarray:
 
 
 def marginal_p_right(program: Program, mu: jnp.ndarray, log_sigma: jnp.ndarray, batch: Batch,
-                     key: jax.Array, n_draws: int = 256) -> np.ndarray:
+                     key: jax.Array, n_draws: int = 2048) -> np.ndarray:
     """Per-trial predictive p(right) under the session marginal: each draw's p(right) on trial t,
     weighted by how well the draw explained the session's trials before t. Uses the same draws as
     ``marginal_scores`` for the same key."""

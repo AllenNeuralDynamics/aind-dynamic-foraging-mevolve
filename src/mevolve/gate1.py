@@ -56,18 +56,20 @@ def compare(records: list[dict], ref_per: dict, ref_pooled: float) -> dict:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Gates 1b and 1c on the test subjects")
     parser.add_argument("--regime", choices=["subject", "session"], required=True)
-    parser.add_argument("--model", action="append", required=True, help="study 12 name, repeatable")
+    parser.add_argument("--model", action="append", required=True,
+                        help="study 12 name, repeatable; NAME=PATH scores another program against NAME's reference")
     parser.add_argument("--freeze", type=Path, required=True)
     parser.add_argument("--studies", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=None)
-    parser.add_argument("--n-draws", type=int, default=256)
+    parser.add_argument("--n-draws", type=int, default=2048)
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     freeze = Freeze(args.freeze)
     subjects = [evaluate.subject_data(freeze, s) for s in freeze.subjects("heldout")]
-    for model in args.model:
-        path = program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
+    for item in args.model:
+        model, _, override = item.partition("=")
+        path = Path(override) if override else program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
         t0 = time.time()
         records = evaluate.evaluate(path, subjects, regime=args.regime, n_draws=args.n_draws, workers=args.workers)
         ref_per, ref_pooled, sources = reference(model, args.regime, args.studies)

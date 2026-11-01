@@ -5,9 +5,13 @@ standard normal on ``x`` is uniform on the parameter's bounds, as in study 13's 
 Sessions are padded into one array per subject and masked, so a fit is one jitted L-BFGS run.
 
 - **Per subject**: one parameter set for all of a subject's fit sessions, by maximum likelihood.
-- **Session level**: each fit session's parameters ``theta_s = mu + sigma * z_s`` vary around the
-  subject's typical values ``mu`` (non-centred form), with ``mu ~ N(0, 1)``, ``log sigma ~ N(-1, 1)``
-  and ``z_s ~ N(0, 1)``, study 13's fixed hyperprior; fitted jointly by MAP.
+- **Session level**: each fit session's parameters ``theta_s ~ N(mu, sigma^2)`` vary around the
+  subject's typical values ``mu``, with study 13's fixed hyperprior ``mu ~ N(0, 1)`` and
+  ``log sigma ~ N(-1, 1)``. ``mu`` and ``sigma`` are fitted by Laplace-EM (the hierarchical EM of
+  Huys et al. 2011), which maximizes the likelihood with each session's parameters integrated out.
+  A joint MAP of (mu, sigma, theta_s) does not work: in non-centred form nothing resists sigma
+  growing (on study 13's test subjects it gave spreads about 15 times study 13's posterior and a
+  session-marginal weight ESS near 1), and in centred form sigma collapses to 0 (MEvolve ADR 0004).
 """
 from __future__ import annotations
 
@@ -154,33 +158,59 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
             "nll": float(values[best]), "nll_starts": np.asarray(values)}
 
 
-def session_level_objective(program: Program, batch: Batch):
-    """Negative log posterior of (mu, log sigma, z) for one subject, in one flat vector."""
-    n = len(program.params)
-    n_s = batch.choices.shape[0]
-    live = batch.mask.any(axis=1)          # padded sessions carry no data and no prior term
+def _session_map(program: Program, batch: Batch, mu, sigma, theta0, max_iter: int):
+    """E-step: each session's MAP under N(mu, sigma^2), and the diagonal of its Laplace covariance."""
+    facts = {k: batch.facts[k] for k in SESSION_FACTS}
+
+    def one(t0, c, r, m, f):
+        def fun(t):
+            logp = trial_logp(program, to_params(program, t), c, r, f)
+            return -jnp.sum(jnp.where(m, logp, 0.0)) + 0.5 * jnp.sum(((t - mu) / sigma) ** 2)
+
+        t, _ = lbfgs(fun, t0, max_iter)
+        h = jax.hessian(fun)(t)
+        w, v = jnp.linalg.eigh(0.5 * (h + h.T))
+        cov = (v / jnp.maximum(w, 1e-8)) @ v.T          # a guard where the Hessian is not positive
+        return t, jnp.diag(cov)
+
+    return jax.vmap(one)(theta0, batch.choices, batch.rewards, batch.mask, facts)
+
+
+def _m_step(theta, var, live, log_sigma):
+    """M-step: mu (Gaussian prior, closed form) and log sigma (log-normal prior, 1-D Newton)."""
+    n = live.sum()
+    sigma2 = jnp.exp(2 * log_sigma)
+    mu = jnp.sum(jnp.where(live[:, None], theta, 0.0), axis=0) / (n + sigma2)     # mu ~ N(0, 1)
+    a = jnp.sum(jnp.where(live[:, None], (theta - mu) ** 2 + var, 0.0), axis=0)
     m, s = LOG_SIGMA_PRIOR
-
-    def unpack(v):
-        return v[:n], v[n:2 * n], v[2 * n:].reshape(n_s, n)
-
-    def fun(v):
-        mu, log_sigma, z = unpack(v)
-        theta = mu + jnp.exp(log_sigma) * z
-        ll = jnp.sum(jnp.where(batch.mask, batch_logp(program, theta, batch), 0.0))
-        prior = (jnp.sum(norm.logpdf(mu)) + jnp.sum(norm.logpdf(log_sigma, m, s))
-                 + jnp.sum(jnp.where(live[:, None], norm.logpdf(z), 0.0)))
-        return -(ll + prior)
-
-    return fun, unpack
+    u = log_sigma
+    for _ in range(20):   # maximize -n u - a exp(-2u) / 2 - (u - m)^2 / (2 s^2); concave in u
+        g = -n + a * jnp.exp(-2 * u) - (u - m) / s ** 2
+        h = -2 * a * jnp.exp(-2 * u) - 1 / s ** 2
+        u = u - g / h
+    return mu, u
 
 
-def fit_session_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_iter: int = 500):
-    """MAP of typical values, spreads and session offsets, started from a per-subject fit."""
-    fun, unpack = session_level_objective(program, batch)
-    n = len(program.params)
-    v0 = jnp.concatenate([x_start, jnp.full(n, LOG_SIGMA_PRIOR[0]), jnp.zeros(batch.choices.shape[0] * n)])
-    v, value = jax.jit(lambda v0: lbfgs(fun, v0, max_iter))(v0)
-    mu, log_sigma, z = unpack(v)
-    return {"mu": mu, "log_sigma": log_sigma, "z": z, "neg_log_posterior": float(value),
-            "typical_params": {k: float(val) for k, val in to_params(program, mu).items()}}
+def fit_session_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_em: int = 100,
+                      tol: float = 1e-3, inner_iter: int = 50):
+    """Typical values ``mu`` and log spreads by Laplace-EM, started from a per-subject fit."""
+    n_s, n = batch.choices.shape[0], len(program.params)
+    live = batch.mask.any(axis=1)
+
+    @jax.jit
+    def em_step(mu, log_sigma, theta):
+        theta, var = _session_map(program, batch, mu, jnp.exp(log_sigma), theta, inner_iter)
+        mu_new, log_sigma_new = _m_step(theta, var, live, log_sigma)
+        return mu_new, log_sigma_new, theta
+
+    mu, log_sigma = jnp.asarray(x_start), jnp.full(n, LOG_SIGMA_PRIOR[0])
+    theta = jnp.broadcast_to(mu, (n_s, n))
+    for it in range(max_em):
+        mu_new, log_sigma_new, theta = em_step(mu, log_sigma, theta)
+        change = float(jnp.maximum(jnp.max(jnp.abs(mu_new - mu)), jnp.max(jnp.abs(log_sigma_new - log_sigma))))
+        mu, log_sigma = mu_new, log_sigma_new
+        if change < tol:
+            break
+    return {"mu": mu, "log_sigma": log_sigma, "theta": theta, "em_iterations": it + 1,
+            "converged": change < tol,
+            "typical_params": {k: float(v) for k, v in to_params(program, mu).items()}}

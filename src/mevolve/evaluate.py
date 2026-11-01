@@ -68,7 +68,7 @@ def _evaluate_one(args) -> dict:
 
 
 def evaluate(program_path, subjects: list[SubjectData], regime: str = "session", seed: int = 0,
-             n_draws: int = 256, n_starts: int = 8, workers: int | None = None) -> list[dict]:
+             n_draws: int = 2048, n_starts: int = 8, workers: int | None = None) -> list[dict]:
     """Fit and score every subject; returns one record per subject, in input order."""
     jobs = [(str(program_path), d, regime, seed, n_draws, n_starts) for d in subjects]
     workers = workers or min(len(jobs), os.cpu_count() or 1)

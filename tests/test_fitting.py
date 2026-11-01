@@ -71,12 +71,24 @@ def test_marginal_with_tiny_spread_equals_point_score(data):
     assert scoring.pooled(ll, n) == pytest.approx(scoring.pooled(m["log_lik"], m["n_trials"]))
 
 
-def test_session_level_fit_runs_and_is_no_worse_in_fit(data):
-    prog, batch = data
+def test_session_level_recovers_a_known_spread():
+    """Sessions whose learning rate varies with a known spread: Laplace-EM recovers that spread
+    to within a factor of 2 and keeps the fixed parameters' spreads small."""
+    prog = program.literature("hattori2019")
+    rng = np.random.default_rng(3)
+    x_true = fitting.from_params(prog, TRUE)
+    spread = np.array([0.6, 0.0, 0.0, 0.0, 0.0])
+    sessions = []
+    for s in range(24):
+        p = {k: float(v) for k, v in fitting.to_params(prog, x_true + spread * rng.normal(size=5)).items()}
+        sessions += simulate(prog, p, rng, n_sessions=1, n_trials=400)
+    batch = fitting.pad(sessions)
     per = fitting.fit_per_subject(prog, batch, n_starts=2)
     sl = fitting.fit_session_level(prog, batch, per["x"])
-    assert np.isfinite(sl["neg_log_posterior"])
-    assert set(sl["typical_params"]) == set(TRUE)
+    sigma = np.exp(np.asarray(sl["log_sigma"]))
+    assert sl["converged"]
+    assert 0.3 < sigma[0] < 1.2, sigma
+    assert np.all(sigma[1:] < 0.6), sigma
 
 
 def test_marginal_p_right_with_tiny_spread_equals_point(data):
