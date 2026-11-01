@@ -26,6 +26,14 @@ def predict(latents, p):
     return jnp.log(jnp.maximum(probs, 1e-300))  # epsilon = 0 gives probability 0, kept finite
 
 
+def _rounded(x):
+    # Round a product before it is added. Under jit, XLA fuses a multiply and an add into one FMA
+    # (one rounding) where numpy rounds twice; the 1-ulp difference can break the exact tie that
+    # epsilon-greedy choice tests for, moving p(left) from 0.5 to 1 - epsilon / 2. The select
+    # stops the fusion and keeps NaN as NaN.
+    return jnp.where(jnp.isnan(x), jnp.nan, x)
+
+
 def update(latents, choice, reward, p):
     chosen = jax.nn.one_hot(choice, 2)
-    return jnp.where(chosen > 0, latents + p["learn_rate"] * (reward - latents), latents)
+    return jnp.where(chosen > 0, latents + _rounded(p["learn_rate"] * (reward - latents)), latents)

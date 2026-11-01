@@ -36,3 +36,12 @@ def test_reference_logits_match_the_programs_on_softmax_models():
         _, latents = program.replay(prog, params, choices[0], rewards[0])
         ours = np.asarray([np.max(prog.predict(lat, {k: np.float64(v) for k, v in params.items()})) for lat in latents])
         assert np.allclose(_reference_max_logit(name, ref), ours, atol=1e-6)
+
+
+def test_epsilon_greedy_exact_tie_survives_jit():
+    """Three rewarded left choices make Q(left) - 0.488 exactly 0 in numpy; a fused multiply-add
+    under jit would break the tie and move p(left) from 0.5 to 0.9 (found in review)."""
+    choices = [np.array([0, 0, 0, 0, 1], dtype=np.int64)]
+    rewards = [np.array([1.0, 1.0, 1.0, 0.0, 0.0])]
+    result = parity.compare("Rescorla-Wagner", {"learn_rate": 0.2, "biasL": -0.488, "epsilon": 0.2}, choices, rewards)
+    assert result["ok"], result
