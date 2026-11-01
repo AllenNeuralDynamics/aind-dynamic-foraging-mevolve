@@ -16,8 +16,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-WORKER_ENV = {"XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1",
-              "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+from .workers import WORKER_ENV
+
 
 
 @dataclass
