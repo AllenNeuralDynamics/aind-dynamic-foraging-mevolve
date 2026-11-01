@@ -98,3 +98,22 @@ def test_marginal_p_right_with_tiny_spread_equals_point(data):
     marg = scoring.marginal_p_right(prog, x, np.full(x.shape, -30.0), batch, jax.random.PRNGKey(1), n_draws=4)
     m = np.asarray(batch.mask)
     assert np.allclose(point[m], marg[m], atol=1e-8)
+
+
+def test_m_step_finds_the_spread_when_sessions_agree():
+    """Review case: 24 sessions at theta = 0 with variance 0.001 each, from log sigma = -1; the
+    optimum of the log-sigma objective is at about -3.401 (Newton steps overshot to -9)."""
+    import jax.numpy as jnp
+    theta = jnp.zeros((24, 1)); var = jnp.full((24, 1), 0.001); live = jnp.ones(24, bool)
+    _, u = fitting._m_step(theta, var, live, jnp.array([-1.0]))
+    assert float(u[0]) == pytest.approx(-3.401, abs=2e-3)
+
+
+def test_a_zero_probability_costs_what_the_reference_charges():
+    import jax.numpy as jnp
+    prog = program.literature("loss_counting")
+    x = fitting.from_params(prog, {"loss_count_threshold_mean": 1.0, "loss_count_threshold_std": 0.0, "biasL": 0.0})
+    sim = [Sim(np.array([0, 0, 0], np.int32), np.array([0.0, 0.0, 0.0]))]     # stays after two losses
+    batch = fitting.pad(sim)
+    nll = float(fitting.per_subject_nll(prog, batch)(x))
+    assert nll < 100        # 0.5 on trial 0, then zero-probability stays at -log(1e-16) each, not 691

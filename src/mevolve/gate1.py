@@ -58,7 +58,8 @@ def compare_study12(records: list[dict], ref: dict) -> dict:
             "subjects_with_other_trial_counts": trials_differ,
             "fit_gap_nats": {"median": float(np.median(fit_gap)), "min": float(fit_gap.min())},
             "share_fit_within_0.5_nats": share,
-            "ok": pooled - pooled_ref >= -POOLED_TOL_1B and share >= FIT_SHARE_1B and not trials_differ}
+            "ok": (pooled - pooled_ref >= -POOLED_TOL_1B and share >= FIT_SHARE_1B and not trials_differ
+                   and len(subs) == len(records))}
 HB_KEY = {"CompareToThreshold": "hb_ctt", "Hattori2019": "hb_hattori"}
 
 
@@ -97,6 +98,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--study12-csv", type=Path, help="a provisional copy of study 12's per_subject_fits.csv")
     parser.add_argument("--n-draws", type=int, default=2048)
     args = parser.parse_args(argv)
+    args.studies = args.studies.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
     freeze = Freeze(args.freeze)
     subjects = [evaluate.subject_data(freeze, s) for s in freeze.subjects("heldout")]
@@ -106,10 +108,10 @@ def main(argv: list[str] | None = None) -> None:
         t0 = time.time()
         records = evaluate.evaluate(path, subjects, regime=args.regime, n_draws=args.n_draws, workers=args.workers)
         if args.regime == "subject" and args.reference == "study12":
-            csv_path = args.study12_csv or args.studies / STUDY12
+            csv_path = (args.study12_csv or args.studies / STUDY12).resolve()
             comparison = compare_study12(records, study12_reference(csv_path, model))
             sources = [str(csv_path)]
-            source_root = Path("/") if args.study12_csv else args.studies
+            source_root = Path("/")
         else:
             ref_per, ref_pooled, sources = reference(model, args.regime, args.studies)
             comparison = compare(records, ref_per, ref_pooled)

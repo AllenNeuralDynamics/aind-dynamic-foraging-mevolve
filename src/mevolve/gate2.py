@@ -28,16 +28,19 @@ from .data import Freeze
 def paired_se(a: list[dict], b: list[dict]) -> dict:
     """Score difference (x100) between two programs on the same subjects, and its standard error.
 
-    The score is 100 exp(sum LL / sum N); its difference is linearized around the pooled mean log
-    likelihood, and its variance is the sum over subjects of the per-subject terms (independent).
+    The score is 100 exp(sum LL / sum N). The difference in mean log likelihood per trial,
+    D = sum d_i / sum N_i with d_i = LL_a,i - LL_b,i, is a ratio estimator; with subjects as the
+    unit its variance is n var(d_i - D N_i) / (sum N)^2, so a subject's length alone adds nothing.
+    The delta method carries it to the score scale.
     """
-    n_tot = sum(r["n_trials"] for r in a)
     da = {r["subject_id"]: r["log_lik"] for r in a}
+    n_i = np.array([r["n_trials"] for r in b], dtype=float)
     d = np.array([da[r["subject_id"]] - r["log_lik"] for r in b])          # a - b per subject
+    n_tot = n_i.sum()
+    big_d = d.sum() / n_tot
     mean_ll = sum(r["log_lik"] for r in a) / n_tot
-    score = 100 * np.exp(mean_ll)
-    diff = 100 * (np.exp(sum(da.values()) / n_tot) - np.exp(sum(r["log_lik"] for r in b) / n_tot))
-    se = score * np.sqrt(len(d)) * np.std(d, ddof=1) / n_tot
+    diff = 100 * (np.exp(mean_ll) - np.exp(mean_ll - big_d))
+    se = 100 * np.exp(mean_ll) * np.sqrt(len(d) * np.var(d - big_d * n_i, ddof=1)) / n_tot
     return {"score_diff_x100": float(diff), "se_x100": float(se), "n_subjects": len(d)}
 
 

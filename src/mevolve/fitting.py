@@ -141,9 +141,17 @@ def lbfgs(fun, x0, max_iter: int = 300, tol: float = 1e-7, abandon: float = jnp.
     return x, fun(x)
 
 
+ZERO_LOGP = float(np.log(1e-300))   # programs write a zero probability as 1e-300 or below
+REF_ZERO_LOGP = float(np.log(1e-16))  # the reference fit's negLL charges a zero as 1e-16
+
+
 def _nll(program: Program, x, choices, rewards, mask, facts):
+    """The fit objective, as the reference fit's ``negLL``: an exact zero probability costs
+    -log(1e-16); small positive probabilities are kept as they are."""
     batch = Batch(choices, rewards, mask, facts)
-    return -jnp.sum(jnp.where(mask, batch_logp(program, x, batch), 0.0))
+    logp = batch_logp(program, x, batch)
+    logp = jnp.where(logp <= ZERO_LOGP, REF_ZERO_LOGP, logp)
+    return -jnp.sum(jnp.where(mask, logp, 0.0))
 
 
 def per_subject_nll(program: Program, batch: Batch):
@@ -261,12 +269,15 @@ def _m_step(theta, var, live, log_sigma):
     mu = jnp.sum(jnp.where(live[:, None], theta, 0.0), axis=0) / (n + sigma2)     # mu ~ N(0, 1)
     a = jnp.sum(jnp.where(live[:, None], (theta - mu) ** 2 + var, 0.0), axis=0)
     m, s = LOG_SIGMA_PRIOR
-    u = log_sigma
-    for _ in range(20):   # maximize -n u - a exp(-2u) / 2 - (u - m)^2 / (2 s^2); concave in u
-        g = -n + a * jnp.exp(-2 * u) - (u - m) / s ** 2
-        h = -2 * a * jnp.exp(-2 * u) - 1 / s ** 2
-        u = u - g / h
-    return mu, u
+    # maximize -n u - a exp(-2u) / 2 - (u - m)^2 / (2 s^2), concave in u: its derivative falls
+    # strictly from +inf to -inf, so bisection finds the one root (Newton steps overshoot when a
+    # is small)
+    lo, hi = jnp.full_like(log_sigma, -30.0), jnp.full_like(log_sigma, 10.0)
+    for _ in range(80):
+        u = 0.5 * (lo + hi)
+        rising = -n + a * jnp.exp(-2 * u) - (u - m) / s ** 2 > 0
+        lo, hi = jnp.where(rising, u, lo), jnp.where(rising, hi, u)
+    return mu, 0.5 * (lo + hi)
 
 
 def fit_session_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_em: int = 20,
