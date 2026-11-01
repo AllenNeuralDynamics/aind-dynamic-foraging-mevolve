@@ -9,7 +9,9 @@ One reference behaviour cannot be matched by any deterministic program: when a l
 ``act_functions.softmax`` returns a one-hot choice at a random side (it takes the argmax of a
 shuffled copy of the logits and uses that index in the unshuffled array). Hattori2019, Bari2019
 and ActorCritic choose through it; only ActorCritic, whose preferences are unbounded, gets there.
-Those trials are left out of both comparisons and counted (``n_excluded``).
+From the first such trial to the end of its session, trials are left out of both comparisons and
+counted (``n_excluded``): the model learns from the choice probability it used, so one random trial
+changes every later one.
 """
 from __future__ import annotations
 
@@ -62,8 +64,10 @@ def compare(name: str, params: dict[str, float], choices: list[np.ndarray], rewa
     p = {k: np.float64(v) for k, v in params.items()}
     out = [run(p, c.astype(np.int32), r.astype(np.float64)) for c, r in zip(choices, rewards)]
     prog_probs = [np.asarray(o[0]) for o in out]
-    keep = [np.ones(len(c), bool) if name not in REFERENCE_SOFTMAX else np.asarray(o[1]) <= SOFTMAX_LIMIT
-            for c, o in zip(choices, out)]
+    # From the first trial past the limit to the end of the session: ActorCritic learns from the
+    # choice probability it used, so one random trial changes every later one.
+    keep = [np.ones(len(c), bool) if name not in REFERENCE_SOFTMAX
+            else np.cumsum(np.asarray(o[1]) > SOFTMAX_LIMIT) == 0 for c, o in zip(choices, out)]
     diff = max((float(np.max(np.abs(a - b)[k])) if k.any() else 0.0) for a, b, k in zip(ref_probs, prog_probs, keep))
     pooled_ref = pooled_likelihood(ref_probs, choices, keep)
     pooled_prog = pooled_likelihood(prog_probs, choices, keep)
