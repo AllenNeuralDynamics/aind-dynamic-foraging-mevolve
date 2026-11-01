@@ -53,3 +53,9 @@ def test_mismatched_sessions_are_refused():
         parity.compare("Hattori2019", parity.draw_params("Hattori2019", np.random.default_rng(0)), c, [np.zeros(2)])
     with pytest.raises(ValueError, match="same sessions"):
         parity.compare("Hattori2019", parity.draw_params("Hattori2019", np.random.default_rng(0)), c[:1], [np.zeros(3)])
+
+
+def test_gate1a_study12_needs_a_source(tmp_path):
+    from mevolve import gate1a
+    with pytest.raises(SystemExit):
+        gate1a.main(["--freeze", str(tmp_path), "--out", str(tmp_path / "x.json"), "--params", "study12"])

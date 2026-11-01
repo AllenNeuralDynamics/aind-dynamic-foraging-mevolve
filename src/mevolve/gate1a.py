@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--workers", type=int, default=os.cpu_count())
     args = parser.parse_args(argv)
+    if args.params == "study12" and not (args.study12_csv or args.studies):
+        parser.error("--params study12 needs --studies or --study12-csv")
     freeze = Freeze(args.freeze)
     subjects = freeze.subjects(args.pool)
     sessions = {s: freeze.subject_sessions(s) for s in subjects}
