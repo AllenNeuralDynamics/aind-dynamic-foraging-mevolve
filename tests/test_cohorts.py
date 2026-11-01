@@ -40,3 +40,10 @@ def test_negative_size_is_refused():
 def test_too_many_is_refused():
     with pytest.raises(ValueError):
         draw(POOL, {"all": 61}, seed=0)
+
+
+def test_a_dry_stratum_passes_its_places_within_its_curriculum_first():
+    pool = {**{f"a{i}": ("A", 10 + i) for i in range(3)}, **{f"b{i}": ("B", 10 + i) for i in range(6)}}
+    out = draw(pool, {"first": 2, "second": 2}, seed=0)
+    for cohort in out.values():
+        assert sorted(s[0] for s in cohort) == ["a", "b"]

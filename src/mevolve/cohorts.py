@@ -73,12 +73,19 @@ def draw(subjects: dict[str, tuple[str, int]], sizes: dict[str, int], seed: int,
     out = {}
     for name, size in sizes.items():
         left = [len(order[k]) - taken[k] for k in keys]
-        counts = _allocate_nested(size, keys, [len(groups[k]) for k in keys])
-        for i, k in enumerate(keys):       # a stratum that runs dry passes its share on
-            counts[i] = min(counts[i], left[i])
-        for i in np.argsort([-x for x in left], kind="stable"):
-            while sum(counts) < size and counts[i] < left[i]:
-                counts[i] += 1
+        target = _allocate_nested(size, keys, [len(groups[k]) for k in keys])
+        counts = [min(t, n) for t, n in zip(target, left)]
+        # A stratum that runs dry passes its places to the other thirds of its own curriculum
+        # first, and only what its curriculum cannot take goes to the other curricula.
+        for cur in sorted({c for c, _ in keys}):
+            idx = [i for i, (c, _) in enumerate(keys) if c == cur]
+            short = sum(target[i] for i in idx) - sum(counts[i] for i in idx)
+            for i in sorted(idx, key=lambda i: -(left[i] - counts[i])):
+                add = min(short, left[i] - counts[i])
+                counts[i] += add
+                short -= add
+        for i in np.argsort([-(n - c) for n, c in zip(left, counts)], kind="stable"):
+            counts[i] += min(size - sum(counts), left[i] - counts[i])
         out[name] = [s for i, k in enumerate(keys) for s in order[k][taken[k]: taken[k] + counts[i]]]
         for i, k in enumerate(keys):
             taken[k] += counts[i]
