@@ -27,6 +27,7 @@ from .program import Program, SESSION_FACTS
 
 LOG_SIGMA_PRIOR = (-1.0, 1.0)   # mean and sd of log sigma (study 13's fixed hyperprior)
 ABANDON_NATS = 100.0            # multi-start: drop a start this far behind the best so far
+FACE_POINTS = 64               # Sobol points screened on each bound face
 
 
 @dataclass(frozen=True)
@@ -198,7 +199,8 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
     1. Differential evolution on the bounded scale, as the reference fits (study 12), for a fixed
        ``de_generations`` with no tolerance stop: each generation's population (15 per
        parameter) is evaluated in one batched pass.
-    2. L-BFGS from the best ``n_starts`` members of the final population.
+    2. L-BFGS from the best ``n_starts`` members of the final population, and from the best
+       point on each bound face (one parameter pinned at a bound; see below).
     3. Nelder-Mead from the best result.
 
     Gradients alone failed gate 1b where a likelihood is flat in some parameters almost
@@ -206,9 +208,16 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
     (FeedbackDependent-RL without a bias); scipy's default DE tolerance stopped after about 20
     generations, still short of the reference on Rescorla-Wagner.
 
+    The bound faces catch an optimum on a bound inside a narrow basin, which DE's interior draws
+    rarely sample and L-BFGS cannot reach, since a bound is at infinity on its probit scale.
+    ActorCritic's critic learning rate has one at 0, about 0.003 wide, 1,000 nats better than
+    the interior optimum on some subjects (issue #15). Each face is screened over the DE starts
+    and ``FACE_POINTS`` Sobol points with the parameter pinned, in one batched pass.
+
     Returns the best unconstrained vector, its parameters and its negative log likelihood.
     """
     from scipy.optimize import differential_evolution, minimize
+    from scipy.stats import qmc
 
     n = len(program.params)
     data = (batch.choices, batch.rewards, batch.mask, batch.facts)
@@ -225,7 +234,14 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
     de = differential_evolution(population_nll, list(zip(lo, hi)), popsize=15, maxiter=de_generations, tol=0,
                                 atol=0, seed=seed, polish=False, vectorized=True, updating="deferred", init="sobol")
     order = np.argsort(de.population_energies, kind="stable")[:n_starts]
-    starts = jnp.asarray(to_x(de.population[order].T))
+    top = de.population[order]
+    faces = []
+    for j in range(n):
+        for bound in (lo[j], hi[j]):
+            v = np.vstack([top, lo + (hi - lo) * qmc.Sobol(n, seed=seed + j).random(FACE_POINTS)])
+            v[:, j] = bound
+            faces.append(v[np.argmin(population_nll(v.T))])
+    starts = jnp.asarray(to_x(np.vstack([top] + faces).T))
     solve = _solver(program, "subject", max_iter)
     out, best = [], np.inf
     for x0 in starts:      # a start 100 nats behind the best so far after 30 iterations is dropped
@@ -236,6 +252,7 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
     xs = jnp.stack([o[0] for o in out])
     values = jnp.stack([o[1] for o in out])
     values = jnp.where(jnp.isfinite(values), values, jnp.inf)
+    n_top = len(top)
     best = int(jnp.argmin(values))
     if polish:
         value_fn = _solver(program, "value", 0)
@@ -246,7 +263,8 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
             xs = xs.at[best].set(jnp.asarray(res.x))
             values = values.at[best].set(res.fun)
     return {"x": xs[best], "params": {k: float(v) for k, v in to_params(program, xs[best]).items()},
-            "nll": float(values[best]), "nll_starts": np.asarray(values)}
+            "nll": float(values[best]), "nll_starts": np.asarray(values[:n_top]),
+            "nll_faces": np.asarray(values[n_top:])}
 
 
 def _session_map(program: Program, batch: Batch, mu, sigma, theta0, max_iter: int):
