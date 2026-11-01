@@ -58,8 +58,8 @@ A held-out session's score averaged over candidate parameter sets, each weighted
 explained the session's earlier trials.
 
 **Cohort**:
-A named set of subjects the evaluator fits and scores (generation, validation, test). Which
-subjects belong to each is a study decision.
+A named set of subjects the evaluator fits and scores (generation, validation, selection, test).
+Which subjects belong to each is a study decision.
 
 **Replay**:
 Running a program through a real session's choices and rewards to get per-trial predictions.
@@ -69,10 +69,15 @@ _Avoid_: closed loop (in `aind-dynamic-foraging-models` that name means replay)
 Running a fitted program as an agent in the task simulator, so it generates its own choices.
 _Avoid_: closed loop, simulation
 
-**Fingerprint**:
-A behavioural statistic computed the same way on real and rolled-out sessions, such as win-stay
-rates or switch curves.
+**Replay fingerprint**:
+A program's predicted choice statistic on real sessions set against the subjects' actual one after the
+same history, such as the switch probability after k consecutive unrewarded trials.
 _Avoid_: aux stat, summary statistic
+
+**Rollout fingerprint**:
+A behavioural statistic of rolled-out sessions set against the same statistic of real sessions, such as
+the switch curve by reward and run length.
+_Avoid_: generative match
 
 ### Search
 
