@@ -22,3 +22,12 @@ def test_paired_se_is_zero_for_a_constant_shift_and_signs_a_minus_b():
     b = [_rec(str(i), -110.0 - i, 200) for i in range(10)]
     out = paired_se(a, b)
     assert out["score_diff_x100"] > 0 and out["se_x100"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_compare_study12_passes_equal_fits_and_fails_a_worse_one():
+    from mevolve.gate1 import compare_study12
+    recs = [{"subject_id": str(i), "log_lik": -60.0, "n_trials": 100, "fit_log_lik": -70.0} for i in range(20)]
+    ref = {str(i): {"eval_ll": -60.0, "eval_n": 100, "fit_ll": -70.0} for i in range(20)}
+    assert compare_study12(recs, ref)["ok"]
+    worse = [dict(r, fit_log_lik=-75.0) if i < 2 else r for i, r in enumerate(recs)]   # 10% worse by 5 nats
+    assert not compare_study12(worse, ref)["ok"]

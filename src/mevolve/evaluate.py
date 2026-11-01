@@ -43,8 +43,9 @@ def _evaluate_one(args) -> dict:
     prog = program.load(program_path)
     fit_batch, score_batch = fitting.pad(data.fit), fitting.pad(data.score)
     per = fitting.fit_per_subject(prog, fit_batch, n_starts=n_starts, seed=seed)
+    fit_ll, _ = scoring.point_scores(prog, per["x"], fit_batch)
     out = {"subject_id": data.subject_id, "params": per["params"], "fit_nll": per["nll"],
-           "n_fit_trials": fit_batch.n_trials}
+           "fit_log_lik": float(fit_ll.sum()), "n_fit_trials": fit_batch.n_trials}
     if regime == "subject":
         ll, n = scoring.point_scores(prog, per["x"], score_batch)
         p_right = scoring.point_p_right(prog, per["x"], score_batch)
