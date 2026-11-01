@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mevolve"
+version = "0.1.0"
+description = "LLM-driven evolutionary discovery of interpretable cognitive models of mouse dynamic foraging"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["numpy", "pandas", "pyarrow"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["data: needs a freeze on /allen (set MEVOLVE_FREEZE) and a studies checkout (MEVOLVE_STUDIES)"]

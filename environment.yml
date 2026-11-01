@@ -1,0 +1,22 @@
+# The mevolve conda env: `mamba env create -f environment.yml`, then `pip install -e .`.
+# Python, JAX, numpy, scipy and pandas match the shared dynamic-foraging-bfm-cpu env. aind-dynamic-foraging-models is
+# pinned to v0.26.0, the commit study 12's literature fits ran: it is the oracle for parity tests.
+# The wrapper and the database package stay out: the freeze runs once, in the shared env.
+name: mevolve
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - numpy=2.4
+  - scipy=1.17
+  - pandas=2.3
+  - pyarrow
+  - pytest
+  - pip:
+      - jax==0.6.1
+      - jaxlib==0.6.1
+      - optax==0.2.8
+      - aind-behavior-gym==0.4.5                       # the [rl] extra, at the shared env's versions
+      - aind-dynamic-foraging-basic-analysis==0.3.34
+      - aind-dynamic-foraging-models[rl] @ git+https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-models@0c95b4b85c5f3d16c30d7dd297f3f2ee1325f112

@@ -4,9 +4,34 @@ LLM-driven evolutionary discovery of interpretable cognitive models of mouse dyn
 The M stands for mice and for models; the repo pairs with
 [`aind-dynamic-foraging-models`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-models).
 
-**Status: design.** There is no code yet. The design is being sharpened before the first line of
-code, and every settled decision is recorded in [`docs/adr/`](docs/adr/) with its vocabulary in
-[`CONTEXT.md`](CONTEXT.md).
+**Status: building.** Every settled decision is recorded in [`docs/adr/`](docs/adr/) with its
+vocabulary in [`CONTEXT.md`](CONTEXT.md); the build order is study 40's `PLAN.md`.
+
+## Use
+
+```bash
+mamba env create -f environment.yml && conda activate mevolve && pip install -e ".[test]"
+pytest -m "not data"                     # unit tests, no data needed
+```
+
+**Data freeze (build step 1, gate 0).** Run once, on a compute node, in the shared
+`dynamic-foraging-bfm-cpu` env, which has the wrapper's dependencies; the wrapper checkout must be
+clean and at the commit the comparators ran:
+
+```bash
+conda activate dynamic-foraging-bfm-cpu      # the freeze only
+PYTHONPATH=src python -m mevolve.freeze --wrapper <wrapper checkout> --out <scratch>/freeze/20260603
+conda activate mevolve                       # everything else
+python -m mevolve.gate0 --freeze <scratch>/freeze/20260603 --studies <studies checkout>
+python -m mevolve.cohorts --freeze <scratch>/freeze/20260603 --studies <studies checkout> \
+    --seed <seed> --size generation=48 --size validation=48 --size selection=100 --out cohorts.json
+```
+
+The freeze holds every trial of every session in the wrapper's split (ignored ones as response 2;
+sessions with only ignored trials are not in the split), each session's pool, fit or score
+role, date-order index, task and stage, and a manifest with the settings, the wrapper commit and
+file digests. It lives on scratch, never in this repo; study 40 records its digests and its cohort
+lists.
 
 ## What it does
 
