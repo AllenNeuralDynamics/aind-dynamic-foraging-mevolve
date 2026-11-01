@@ -77,3 +77,12 @@ def test_session_level_fit_runs_and_is_no_worse_in_fit(data):
     sl = fitting.fit_session_level(prog, batch, per["x"])
     assert np.isfinite(sl["neg_log_posterior"])
     assert set(sl["typical_params"]) == set(TRUE)
+
+
+def test_marginal_p_right_with_tiny_spread_equals_point(data):
+    prog, batch = data
+    x = fitting.from_params(prog, TRUE)
+    point = scoring.point_p_right(prog, x, batch)
+    marg = scoring.marginal_p_right(prog, x, np.full(x.shape, -30.0), batch, jax.random.PRNGKey(1), n_draws=4)
+    m = np.asarray(batch.mask)
+    assert np.allclose(point[m], marg[m], atol=1e-8)

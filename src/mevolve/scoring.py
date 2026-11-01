@@ -60,3 +60,28 @@ def marginal_scores(program: Program, mu: jnp.ndarray, log_sigma: jnp.ndarray, b
 def pooled(log_lik, n_trials) -> float:
     """exp(sum log likelihood / sum trials) over any set of sessions or subjects."""
     return float(np.exp(np.sum(log_lik) / np.sum(n_trials)))
+
+
+def point_p_right(program: Program, x: jnp.ndarray, batch: Batch) -> np.ndarray:
+    """Per-trial p(right) at one parameter set, shape (n_sessions, n_trials)."""
+    p_chosen = jnp.exp(batch_logp(program, x, batch))
+    return np.asarray(jnp.where(batch.choices == 1, p_chosen, 1.0 - p_chosen))
+
+
+def marginal_p_right(program: Program, mu: jnp.ndarray, log_sigma: jnp.ndarray, batch: Batch,
+                     key: jax.Array, n_draws: int = 256) -> np.ndarray:
+    """Per-trial predictive p(right) under the session marginal: each draw's p(right) on trial t,
+    weighted by how well the draw explained the session's trials before t. Uses the same draws as
+    ``marginal_scores`` for the same key."""
+    eps = jax.random.normal(key, (n_draws, mu.shape[0]))
+    theta = mu + jnp.exp(log_sigma) * eps
+
+    def one_draw(t):
+        logp = jnp.where(batch.mask, clipped(batch_logp(program, t, batch)), 0.0)
+        before = jnp.cumsum(logp, axis=1) - logp                         # log lik of trials < t
+        p_chosen = jnp.exp(logp)
+        return before, jnp.where(batch.choices == 1, p_chosen, 1.0 - p_chosen)
+
+    before, p_right = jax.lax.map(one_draw, theta)                       # (n_draws, S, T) each
+    w = jax.nn.softmax(before, axis=0)
+    return np.asarray(jnp.sum(w * p_right, axis=0))

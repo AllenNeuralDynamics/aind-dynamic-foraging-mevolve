@@ -37,6 +37,7 @@ def _evaluate_one(args) -> dict:
     import jax
 
     from . import fitting, program, scoring
+    from .fingerprints import fingerprints
 
     t0 = time.time()
     prog = program.load(program_path)
@@ -46,15 +47,21 @@ def _evaluate_one(args) -> dict:
            "n_fit_trials": fit_batch.n_trials}
     if regime == "subject":
         ll, n = scoring.point_scores(prog, per["x"], score_batch)
+        p_right = scoring.point_p_right(prog, per["x"], score_batch)
     else:
         sl = fitting.fit_session_level(prog, fit_batch, per["x"])
         key = jax.random.PRNGKey(seed + int(data.subject_id) % 100_000)   # common draws per subject
         m = scoring.marginal_scores(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
         ll, n = m["log_lik"], m["n_trials"]
+        p_right = scoring.marginal_p_right(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
         out.update({"typical_params": sl["typical_params"], "log_sigma": np.asarray(sl["log_sigma"]).tolist(),
                     "ess": m["ess"][: len(data.score)].tolist()})
     k = len(data.score)
-    out.update({"session_ids": [s.session_id for s in data.score], "session_log_lik": ll[:k].tolist(),
+    out["fingerprints"] = fingerprints([s for s in data.score],
+                                       [p_right[i, : len(s.choices)] for i, s in enumerate(data.score)])
+    out.update({"session_ids": [s.session_id for s in data.score],
+                "session_groups": [f"{s.stage_group}|{s.task}" for s in data.score],
+                "session_log_lik": ll[:k].tolist(),
                 "session_n_trials": n[:k].astype(int).tolist(), "log_lik": float(ll[:k].sum()),
                 "n_trials": int(n[:k].sum()), "seconds": time.time() - t0})
     return out
