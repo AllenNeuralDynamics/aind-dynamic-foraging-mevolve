@@ -118,6 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     wrapper_sha = _git_sha(args.wrapper)
+    mevolve_sha = _git_sha(Path(__file__).resolve().parents[2])
     sys.path.insert(0, str(args.wrapper / "code"))
     args.out.mkdir(parents=True, exist_ok=False)
 
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> None:
     record = {
         "data": DATA,
         "wrapper_git_sha": wrapper_sha,
+        "mevolve_git_sha": mevolve_sha,
         "packages": {p: metadata.version(p) for p in ("aind-dynamic-foraging-database", "pandas", "pyarrow")},
         "split_source": "data_loaders.mice.resolve_mice_snapshot_session_split_manifest (multisubject)",
         "pools": pools,
