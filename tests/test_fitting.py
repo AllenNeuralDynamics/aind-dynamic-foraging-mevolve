@@ -154,3 +154,11 @@ def test_per_subject_fit_reaches_an_optimum_on_a_bound(tmp_path):
     assert fit["params"]["a"] < 1e-6 and fit["params"]["b"] > 4.99
     assert fit["nll"] == pytest.approx(-200 * np.log(jax.nn.sigmoid(4.0)), rel=1e-6)
     assert np.min(fit["nll_starts"]) > fit["nll"] + 50          # the interior starts stay behind
+
+
+def test_each_de_restart_contributes_starts(data):
+    """Issue #17: the L-BFGS starts come from every DE restart, two from each by default."""
+    prog, batch = data
+    fit = fitting.fit_per_subject(prog, batch, n_starts=4, de_restarts=2, de_generations=10)
+    assert len(fit["nll_starts"]) == 4 and len(fit["nll_faces"]) == 2 * len(prog.params)
+    assert len(fitting.fit_per_subject(prog, batch, n_starts=2, de_restarts=4, de_generations=5)["nll_starts"]) == 4
