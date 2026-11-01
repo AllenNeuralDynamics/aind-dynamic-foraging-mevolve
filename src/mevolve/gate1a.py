@@ -34,8 +34,8 @@ def _one(args):
     return {"subject_id": subject_id, "params": params, **r}
 
 
-def study12_params(studies: Path, name: str) -> dict[str, dict[str, float]]:
-    with (studies / STUDY12_FITS).open(newline="") as handle:
+def study12_params(csv_path: Path, name: str) -> dict[str, dict[str, float]]:
+    with csv_path.open(newline="") as handle:
         return {row["subject_id"]: json.loads(row["fitted_params"])
                 for row in csv.DictReader(handle) if row["literature_model"] == name}
 
@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--pool", default="heldout")
     parser.add_argument("--params", choices=["random", "study12"], default="random")
     parser.add_argument("--studies", type=Path)
+    parser.add_argument("--study12-csv", type=Path, help="a provisional copy of study 12's per_subject_fits.csv")
     parser.add_argument("--model", action="append")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--workers", type=int, default=os.cpu_count())
@@ -66,7 +67,7 @@ def main(argv: list[str] | None = None) -> None:
         for name in models:
             t0 = time.time()
             if args.params == "study12":
-                fitted = study12_params(args.studies, name)
+                fitted = study12_params(args.study12_csv or args.studies / STUDY12_FITS, name)
                 _, clamped = literature.fit_spec(name)
                 per_subject = {s: {k: v for k, v in fitted[s].items() if k not in clamped} for s in subjects}
             else:
