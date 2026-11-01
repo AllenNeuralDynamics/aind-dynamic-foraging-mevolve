@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# Run outputs belong on scratch and in study 40, never here
+results/
+wandb/
+*.sqlite
+*.sqlite3
+
+# Secrets never enter the repo
+.env
+*.key
+*api_key*
