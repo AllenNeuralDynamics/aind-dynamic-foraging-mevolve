@@ -56,6 +56,8 @@ def load(path: Path | str) -> Program:
         raise ValueError(f"{path.name} does not define {', '.join(missing)}")
     if len(module.LATENT_NAMES) != module.N_LATENT:
         raise ValueError(f"{path.name}: N_LATENT is {module.N_LATENT} but LATENT_NAMES has {len(module.LATENT_NAMES)}")
+    if not module.PARAMS:       # every regime fits at least one parameter
+        raise ValueError(f"{path.name}: PARAMS is empty; a program needs at least one fitted parameter")
     params = {k: (float(lo), float(hi)) for k, (lo, hi) in module.PARAMS.items()}
     return Program(name=path.stem, source=source, params=params, latent_names=tuple(module.LATENT_NAMES),
                    init_latents=module.init_latents, predict=module.predict, update=module.update)

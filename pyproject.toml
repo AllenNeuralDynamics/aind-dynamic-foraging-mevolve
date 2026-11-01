@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "LLM-driven evolutionary discovery of interpretable cognitive models of mouse dynamic foraging"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["numpy", "pandas", "pyarrow", "jax"]
+dependencies = ["numpy", "pandas", "pyarrow", "scipy", "jax", "optax>=0.2.4"]
 
 [project.optional-dependencies]
 test = ["pytest", "aind-dynamic-foraging-models[rl] @ git+https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-models@0c95b4b85c5f3d16c30d7dd297f3f2ee1325f112"]
