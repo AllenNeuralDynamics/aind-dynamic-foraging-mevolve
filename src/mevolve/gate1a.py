@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .evaluate import WORKER_ENV
+from .workers import WORKER_ENV
 
 STUDY12_FITS = "studies/12-cognitive-literature-leaderboard/analysis/per_subject_fits.csv"
 
