@@ -163,6 +163,12 @@ def _solver(program: Program, kind: str, max_iter: int):
         if kind == "subject":
             def solve(x0, c, r, m, f, abandon):
                 return lbfgs(lambda x: _nll(program, x, c, r, m, f), x0, max_iter, abandon=abandon)
+        elif kind == "screen":
+            def solve(xs, c, r, m, f):
+                return jax.vmap(lambda x: _nll(program, x, c, r, m, f))(xs)
+        elif kind == "value":
+            def solve(x, c, r, m, f):
+                return _nll(program, x, c, r, m, f)
         else:
             def solve(t0, c, r, m, f, mu, sigma):
                 def fun(t):
@@ -177,13 +183,41 @@ def _solver(program: Program, kind: str, max_iter: int):
     return _SOLVERS[key]
 
 
-def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int = 0, max_iter: int = 300):
-    """MLE of one parameter set; starts at the centre of the box plus ``n_starts - 1`` random ones.
+def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int = 0, max_iter: int = 300,
+                    de_generations: int = 150, polish: bool = True):
+    """MLE of one parameter set, in three steps.
+
+    1. Differential evolution on the bounded scale, as the reference fits (study 12), for a fixed
+       ``de_generations`` with no tolerance stop: each generation's population (15 per
+       parameter) is evaluated in one batched pass.
+    2. L-BFGS from the best ``n_starts`` members of the final population.
+    3. Nelder-Mead from the best result.
+
+    Gradients alone failed gate 1b where a likelihood is flat in some parameters almost
+    everywhere (Rescorla-Wagner's epsilon-greedy choice) or has several optima
+    (FeedbackDependent-RL without a bias); scipy's default DE tolerance stopped after about 20
+    generations, still short of the reference on Rescorla-Wagner.
 
     Returns the best unconstrained vector, its parameters and its negative log likelihood.
     """
+    from scipy.optimize import differential_evolution, minimize
+
     n = len(program.params)
-    starts = jnp.concatenate([jnp.zeros((1, n)), jax.random.normal(jax.random.PRNGKey(seed), (n_starts - 1, n))])
+    data = (batch.choices, batch.rewards, batch.mask, batch.facts)
+    screen = _solver(program, "screen", 0)
+    lo, hi = (np.asarray(a) for a in bounds_arrays(program))
+
+    def to_x(v):        # bounded (n, ...) -> unconstrained (..., n)
+        return norm.ppf(np.clip((np.moveaxis(v, 0, -1) - lo) / (hi - lo), 1e-12, 1 - 1e-12))
+
+    def population_nll(v):
+        out = np.asarray(screen(jnp.asarray(to_x(v)), *data))
+        return np.where(np.isfinite(out), out, 1e12)
+
+    de = differential_evolution(population_nll, list(zip(lo, hi)), popsize=15, maxiter=de_generations, tol=0,
+                                atol=0, seed=seed, polish=False, vectorized=True, updating="deferred", init="sobol")
+    order = np.argsort(de.population_energies, kind="stable")[:n_starts]
+    starts = jnp.asarray(to_x(de.population[order].T))
     solve = _solver(program, "subject", max_iter)
     out, best = [], np.inf
     for x0 in starts:      # a start 100 nats behind the best so far after 30 iterations is dropped
@@ -195,6 +229,14 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
     values = jnp.stack([o[1] for o in out])
     values = jnp.where(jnp.isfinite(values), values, jnp.inf)
     best = int(jnp.argmin(values))
+    if polish:
+        value_fn = _solver(program, "value", 0)
+        f = lambda x: float(value_fn(jnp.asarray(x), *data))
+        res = minimize(f, np.asarray(xs[best]), method="Nelder-Mead",
+                       options={"maxfev": 200 * n, "xatol": 1e-6, "fatol": 1e-7})
+        if np.isfinite(res.fun) and res.fun < float(values[best]):
+            xs = xs.at[best].set(jnp.asarray(res.x))
+            values = values.at[best].set(res.fun)
     return {"x": xs[best], "params": {k: float(v) for k, v in to_params(program, xs[best]).items()},
             "nll": float(values[best]), "nll_starts": np.asarray(values)}
 
