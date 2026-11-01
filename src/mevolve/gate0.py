@@ -69,7 +69,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--freeze", type=Path, required=True)
     parser.add_argument("--studies", type=Path, required=True, help="studies repo checkout")
     args = parser.parse_args(argv)
+    from .data import verify_files
+
     manifest = json.loads((args.freeze / "manifest.json").read_text())
+    verify_files(args.freeze, manifest)
     result = check(manifest, args.studies)
     result["freeze_manifest_sha256"] = hashlib.sha256((args.freeze / "manifest.json").read_bytes()).hexdigest()
     (args.freeze / "gate0.json").write_text(json.dumps(result, indent=1) + "\n")

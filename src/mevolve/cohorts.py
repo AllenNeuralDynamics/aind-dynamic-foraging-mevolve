@@ -12,6 +12,7 @@ Which sizes and seed to use is study 40's decision; the lists it draws are commi
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -60,6 +61,8 @@ def draw(subjects: dict[str, tuple[str, int]], sizes: dict[str, int], seed: int,
     ``subjects`` maps each training-pool subject to (curriculum, session count); ``exclude``
     subjects are never drawn.
     """
+    if any(n < 0 for n in sizes.values()):
+        raise ValueError(f"cohort sizes must be non-negative: {sizes}")
     groups = strata({s: v for s, v in subjects.items() if s not in exclude})
     keys = sorted(groups)
     order = {k: [groups[k][i] for i in np.random.default_rng([seed, j]).permutation(len(groups[k]))]
@@ -93,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--size", action="append", required=True, help="name=count, in draw order")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    freeze = Freeze(args.freeze, verify=False)
+    freeze = Freeze(args.freeze)
     ses = freeze.sessions[freeze.sessions["pool"] == "train"]
     counts = ses.groupby("subject_id").size()
     curricula = ses.groupby("subject_id")["curriculum"].first()
@@ -101,7 +104,8 @@ def main(argv: list[str] | None = None) -> None:
     exclude = set(gru_extra_test_subjects(freeze.manifest, args.studies))
     sizes = {name: int(n) for name, n in (item.split("=") for item in args.size)}
     cohorts = draw(subjects, sizes, args.seed, exclude)
-    record = {"seed": args.seed, "sizes": sizes, "excluded": sorted(exclude),
+    manifest_sha = hashlib.sha256((args.freeze / "manifest.json").read_bytes()).hexdigest()
+    record = {"freeze_manifest_sha256": manifest_sha, "seed": args.seed, "sizes": sizes, "excluded": sorted(exclude),
               "strata": "curriculum x session-count thirds", "cohorts": cohorts}
     args.out.write_text(json.dumps(record, indent=1) + "\n")
     print({k: len(v) for k, v in cohorts.items()})

@@ -35,6 +35,17 @@ class Session:
         return "final" if self.stage in FINAL_STAGES else "earlier"
 
 
+def verify_files(path: Path | str, manifest: dict) -> None:
+    """Refuse a freeze whose files are missing or differ from the manifest's digests."""
+    for name, digest in manifest["files"].items():
+        file = Path(path) / name
+        if not file.exists():
+            raise ValueError(f"{name} is missing from {path}")
+        actual = hashlib.sha256(file.read_bytes()).hexdigest()
+        if actual != digest:
+            raise ValueError(f"{name}: sha256 {actual} differs from the manifest's {digest}")
+
+
 class Freeze:
     """A freeze directory: ``manifest.json``, ``sessions.parquet``, ``trials.parquet``."""
 
@@ -42,10 +53,7 @@ class Freeze:
         self.path = Path(path)
         self.manifest = json.loads((self.path / "manifest.json").read_text())
         if verify:
-            for name, digest in self.manifest["files"].items():
-                actual = hashlib.sha256((self.path / name).read_bytes()).hexdigest()
-                if actual != digest:
-                    raise ValueError(f"{name}: sha256 {actual} differs from the manifest's {digest}")
+            verify_files(self.path, self.manifest)
         self.sessions = pd.read_parquet(self.path / "sessions.parquet")
         trials = pd.read_parquet(self.path / "trials.parquet")
         trials = trials[trials["response"] != 2]

@@ -32,6 +32,11 @@ def test_seeded_and_excluding():
     assert not {"a0", "b5"} & {s for v in out.values() for s in v}
 
 
+def test_negative_size_is_refused():
+    with pytest.raises(ValueError, match="non-negative"):
+        draw(POOL, {"generation": 70, "validation": -20}, seed=0)
+
+
 def test_too_many_is_refused():
     with pytest.raises(ValueError):
         draw(POOL, {"all": 61}, seed=0)
