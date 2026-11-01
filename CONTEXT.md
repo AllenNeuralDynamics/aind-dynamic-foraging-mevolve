@@ -44,7 +44,7 @@ subject by study 12, which defines the term.
 _Avoid_: published model, author model
 
 **Seed library**:
-Study 12's 19 literature models rewritten as programs, each checked against its original.
+The literature models study 12 ranks, rewritten as programs, each checked against its original.
 
 ### Fitting and scoring
 
