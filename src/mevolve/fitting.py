@@ -193,20 +193,22 @@ def _solver(program: Program, kind: str, max_iter: int):
 
 
 def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int = 0, max_iter: int = 300,
-                    de_generations: int = 150, polish: bool = True):
+                    de_restarts: int = 4, de_generations: int = 40, polish: bool = True):
     """MLE of one parameter set, in three steps.
 
-    1. Differential evolution on the bounded scale, as the reference fits (study 12), for a fixed
-       ``de_generations`` with no tolerance stop: each generation's population (15 per
-       parameter) is evaluated in one batched pass.
-    2. L-BFGS from the best ``n_starts`` members of the final population, and from the best
-       point on each bound face (one parameter pinned at a bound; see below).
+    1. Differential evolution on the bounded scale, as the reference fits (study 12):
+       ``de_restarts`` independent runs of a fixed ``de_generations`` each, with no tolerance
+       stop; each generation's population (15 per parameter) is evaluated in one batched pass.
+    2. L-BFGS from the best ``n_starts / de_restarts`` (at least one) members of each run's final population,
+       and from the best point on each bound face (one parameter pinned at a bound; see below).
     3. Nelder-Mead from the best result.
 
     Gradients alone failed gate 1b where a likelihood is flat in some parameters almost
     everywhere (Rescorla-Wagner's epsilon-greedy choice) or has several optima
     (FeedbackDependent-RL without a bias); scipy's default DE tolerance stopped after about 20
-    generations, still short of the reference on Rescorla-Wagner.
+    generations, still short of the reference on Rescorla-Wagner. One DE run settles in one basin:
+    on Miller-RHG's 16 failing subjects (issue #17), 400 generations instead of 150 fixed 1 and 16
+    L-BFGS starts fixed none, while 4 independent runs of 40 generations fixed 15.
 
     The bound faces catch an optimum on a bound inside a narrow basin, which DE's interior draws
     rarely sample and L-BFGS cannot reach, since a bound is at infinity on its probit scale.
@@ -231,10 +233,14 @@ def fit_per_subject(program: Program, batch: Batch, n_starts: int = 8, seed: int
         out = np.asarray(screen(jnp.asarray(to_x(v)), *data))
         return np.where(np.isfinite(out), out, 1e12)
 
-    de = differential_evolution(population_nll, list(zip(lo, hi)), popsize=15, maxiter=de_generations, tol=0,
-                                atol=0, seed=seed, polish=False, vectorized=True, updating="deferred", init="sobol")
-    order = np.argsort(de.population_energies, kind="stable")[:n_starts]
-    top = de.population[order]
+    top = []
+    for restart in range(de_restarts):
+        de = differential_evolution(population_nll, list(zip(lo, hi)), popsize=15, maxiter=de_generations, tol=0,
+                                    atol=0, seed=seed + restart, polish=False, vectorized=True, updating="deferred",
+                                    init="sobol")
+        order = np.argsort(de.population_energies, kind="stable")[:max(1, n_starts // de_restarts)]
+        top.append(de.population[order])
+    top = np.vstack(top)
     faces = []
     for j in range(n):
         for bound in (lo[j], hi[j]):
