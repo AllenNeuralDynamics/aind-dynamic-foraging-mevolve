@@ -45,3 +45,11 @@ def test_epsilon_greedy_exact_tie_survives_jit():
     rewards = [np.array([1.0, 1.0, 1.0, 0.0, 0.0])]
     result = parity.compare("Rescorla-Wagner", {"learn_rate": 0.2, "biasL": -0.488, "epsilon": 0.2}, choices, rewards)
     assert result["ok"], result
+
+
+def test_mismatched_sessions_are_refused():
+    c = [np.zeros(2, dtype=np.int64), np.zeros(2, dtype=np.int64)]
+    with pytest.raises(ValueError, match="same sessions"):
+        parity.compare("Hattori2019", parity.draw_params("Hattori2019", np.random.default_rng(0)), c, [np.zeros(2)])
+    with pytest.raises(ValueError, match="same sessions"):
+        parity.compare("Hattori2019", parity.draw_params("Hattori2019", np.random.default_rng(0)), c[:1], [np.zeros(3)])

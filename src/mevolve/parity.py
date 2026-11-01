@@ -64,9 +64,11 @@ def draw_params(name: str, rng: np.random.Generator) -> dict[str, float]:
 def compare(name: str, params: dict[str, float], choices: list[np.ndarray], rewards: list[np.ndarray]) -> dict:
     """Replay one literature model both ways on the same sessions, at the same parameters."""
     _, clamped = literature.fit_spec(name)
+    if len(choices) != len(rewards) or any(len(c) != len(r) for c, r in zip(choices, rewards)):
+        raise ValueError("choices and rewards must hold the same sessions, trial for trial")
     ref = literature.oracle(name, params={**params, **clamped})
     ref_probs, keep = [], []
-    for c, r in zip(choices, rewards):      # perform_closed_loop_multi_session, one session at a time
+    for c, r in zip(choices, rewards, strict=True):   # perform_closed_loop_multi_session, one at a time
         ref.perform_closed_loop(c, r)
         ref_probs.append(ref.choice_prob.copy().T)
         # From the reference's first trial past the limit to the session's end: ActorCritic learns
