@@ -34,7 +34,7 @@ def subject_data(freeze, subject_id: str) -> SubjectData:
 
 
 def _evaluate_one(args) -> dict:
-    program_path, data, regime, seed, n_draws, n_starts = args
+    program_path, data, regime, seed, n_draws, n_starts, max_em = args
     import jax
 
     from . import fitting, program, scoring
@@ -51,14 +51,15 @@ def _evaluate_one(args) -> dict:
         ll, n = scoring.point_scores(prog, per["x"], score_batch)
         p_right = scoring.point_p_right(prog, per["x"], score_batch)
     else:
-        sl = fitting.fit_session_level(prog, fit_batch, per["x"])
+        sl = fitting.fit_session_level(prog, fit_batch, per["x"], max_em=max_em)
         # common random draws per subject, from a stable hash of its id
         key = jax.random.PRNGKey(seed + zlib.crc32(data.subject_id.encode()) % 100_000)
         m = scoring.marginal_scores(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
         ll, n = m["log_lik"], m["n_trials"]
         p_right = scoring.marginal_p_right(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
         out.update({"typical_params": sl["typical_params"], "log_sigma": np.asarray(sl["log_sigma"]).tolist(),
-                    "ess": m["ess"][: len(data.score)].tolist()})
+                    "ess": m["ess"][: len(data.score)].tolist(),
+                    "em_iterations": sl["em_iterations"], "converged": bool(sl["converged"])})
     k = len(data.score)
     out["fingerprints"] = fingerprints([s for s in data.score],
                                        [p_right[i, : len(s.choices)] for i, s in enumerate(data.score)])
@@ -71,9 +72,12 @@ def _evaluate_one(args) -> dict:
 
 
 def evaluate(program_path, subjects: list[SubjectData], regime: str = "session", seed: int = 0,
-             n_draws: int = 2048, n_starts: int = 8, workers: int | None = None) -> list[dict]:
-    """Fit and score every subject; returns one record per subject, in input order."""
-    jobs = [(str(program_path), d, regime, seed, n_draws, n_starts) for d in subjects]
+             n_draws: int = 2048, n_starts: int = 8, workers: int | None = None,
+             max_em: int = 20) -> list[dict]:
+    """Fit and score every subject; returns one record per subject, in input order. ``max_em``
+    caps the session-level EM: 20 for the search, more to run it to convergence for reported
+    scores (ADR 0004)."""
+    jobs = [(str(program_path), d, regime, seed, n_draws, n_starts, max_em) for d in subjects]
     workers = workers or min(len(jobs), os.cpu_count() or 1)
     if workers == 1:
         return [_evaluate_one(j) for j in jobs]

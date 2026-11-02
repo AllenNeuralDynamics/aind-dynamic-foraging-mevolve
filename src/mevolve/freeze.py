@@ -57,7 +57,7 @@ def _git_sha(repo: Path) -> str:
     dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], check=True,
                            capture_output=True, text=True).stdout.strip()
     if dirty:
-        raise SystemExit(f"{repo} has uncommitted changes; freeze from a clean checkout")
+        raise SystemExit(f"{repo} has uncommitted changes; run from a clean checkout")
     return sha
 
 

@@ -48,6 +48,13 @@ python -m mevolve.gate1 --regime session --model CompareToThreshold --model Hatt
 python -m mevolve.gate2 --freeze <freeze> --cohorts cohorts.json --model Hattori2019 --model CompareToThreshold --out gate2.json
 ```
 
+Reported session-level scores of the literature models (study 12's regime 2) run EM to
+convergence, on any pool of the freeze, from a clean checkout:
+
+```bash
+python -m mevolve.score --model Hattori2019 --pool all --freeze <freeze> --out <dir> --workers 112
+```
+
 ## What it does
 
 - An LLM (Claude) proposes **programs**: short JAX modules that predict each choice of a mouse
