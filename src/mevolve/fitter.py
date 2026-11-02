@@ -46,7 +46,7 @@ class Fit:
     def session_params(self) -> list[dict]:
         """Each fitted session's parameters: the per-subject set, or the session's own (2-level)."""
         xs = self.session_x if self.regime == "2level" else jnp.broadcast_to(self.x, (len(self.sessions), len(self.x)))
-        return [{k: float(v) for k, v in fitting.to_params(self.program, xi).items()} for xi in xs[: len(self.sessions)]]
+        return [{k: float(v) for k, v in fitting.to_params(self.program, xi).items()} for xi in xs]
 
     def latents(self) -> list[dict]:
         """Latent variables before each trial and the choice probabilities, for every fitted
@@ -85,7 +85,9 @@ def fit(program: Program, sessions: list, regime: str = "subject", *, seed: int 
     result = Fit(program, regime, list(sessions), per["x"], per["params"], per["nll"], batch=batch)
     if regime == "2level":
         sl = fitting.fit_two_level(program, batch, per["x"], max_em=max_em)
-        result.mu, result.log_sigma, result.session_x = sl["mu"], sl["log_sigma"], sl["theta"]
+        # theta has a row per padded session; keep the real ones
+        result.mu, result.log_sigma = sl["mu"], sl["log_sigma"]
+        result.session_x = sl["theta"][: len(sessions)]
         result.typical_params = sl["typical_params"]
         result.em_iterations, result.converged = sl["em_iterations"], bool(sl["converged"])
     return result

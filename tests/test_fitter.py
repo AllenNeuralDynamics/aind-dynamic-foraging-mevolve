@@ -12,7 +12,7 @@ from test_score import _subject
 @pytest.fixture(scope="module")
 def sessions():
     prog = program.literature("hattori2019")
-    return prog, simulate(prog, TRUE, np.random.default_rng(1), n_sessions=4, n_trials=150)
+    return prog, simulate(prog, TRUE, np.random.default_rng(1), n_sessions=5, n_trials=150)   # pads to 8
 
 
 def test_per_subject_fit_and_its_latents(sessions):
@@ -34,6 +34,7 @@ def test_two_level_fit_gives_each_session_its_own_parameters(sessions):
     assert 1 <= f.em_iterations <= 3 and isinstance(f.converged, bool)
     assert set(f.typical_params) == set(prog.params)
     per_session = f.session_params()
+    assert f.session_x.shape == (len(sess), len(prog.params))
     assert len(per_session) == len(sess) and len(f.latents()) == len(sess)
     assert len({round(p["learn_rate_rew"], 12) for p in per_session}) > 1    # sessions differ
 
