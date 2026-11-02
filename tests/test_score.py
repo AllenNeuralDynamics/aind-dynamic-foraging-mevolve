@@ -59,9 +59,10 @@ def test_score_cli_records_pools_provenance_and_the_reported_em_cap(tmp_path, mo
     assert out["mevolve_git_sha"] == "f" * 40 and out["n_not_converged"] == 1 and len(out["program_sha256"]) == 64
 
 
-def test_score_cli_rejects_a_nonpositive_em_cap(tmp_path):
+def test_score_cli_rejects_a_nonpositive_em_cap_or_draw_count(tmp_path):
     import pytest
-    for cap in ("0", "-3"):
-        with pytest.raises(SystemExit):
-            score.main(["--freeze", str(tmp_path), "--out", str(tmp_path / "out"), "--max-em", cap])
+    for flag in ("--max-em", "--n-draws"):
+        for value in ("0", "-3"):
+            with pytest.raises(SystemExit):
+                score.main(["--freeze", str(tmp_path), "--out", str(tmp_path / "out"), flag, value])
     assert not (tmp_path / "out").exists()
