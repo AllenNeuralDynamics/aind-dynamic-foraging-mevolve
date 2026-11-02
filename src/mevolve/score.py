@@ -35,6 +35,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args(argv)
+    if args.max_em < 1:
+        parser.error("--max-em must be at least 1")
     sha = _git_sha(Path(__file__).resolve().parents[2])
     freeze = Freeze(args.freeze)
     pools = list(freeze.manifest["pools"]) if args.pool == "all" else [args.pool]
