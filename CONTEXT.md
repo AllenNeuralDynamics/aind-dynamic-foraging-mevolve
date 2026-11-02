@@ -48,10 +48,22 @@ The literature models study 12 ranks, rewritten as programs, each checked agains
 
 ### Fitting and scoring
 
-**Session level**:
-The fitting regime in which each session's parameters vary around the subject's typical values,
-with no population level.
-_Avoid_: hierarchical model, random effects
+**Fitting regimes** are named by their levels and their method (decided with Han, 2026-11-02):
+
+| label | levels (parameters vary around…) | method | where |
+|---|---|---|---|
+| **per session** | none: each session fitted alone | maximum likelihood | the lab's per-session fitting, [aind-analysis-wrapper-df-model-fitting](https://github.com/AllenNeuralDynamics/aind-analysis-wrapper-df-model-fitting) |
+| **per subject** | none: one parameter set per subject | maximum likelihood | study 12 r1 (regime 1) |
+| **3-level HB** | session → subject → population | full posterior (NUTS) | study 08, which did not mix |
+| **2-level HB** | session → subject | full posterior (NUTS) | study 13 (HB-CTT, HB-Hattori) |
+| **2-level EM** | session → subject | Laplace-EM | MEvolve's evaluator; study 12 r3 (EM-CTT, ...) |
+
+**2-level model**:
+The model in which each session's parameters vary around the subject's typical values, with no
+population level. MEvolve fits it by Laplace-EM (2-level EM); study 13 samples its full posterior
+(2-level HB).
+_Avoid_: session level (reads as each session fitted alone), hierarchical model (2 or 3 levels?),
+random effects, EM alone (GLM-HMMs are also fitted by EM)
 
 **Typical values**:
 The parameter values of a subject around which its sessions vary.
