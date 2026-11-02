@@ -56,7 +56,7 @@ The literature models study 12 ranks, rewritten as programs, each checked agains
 | **per subject** | none: one parameter set per subject | maximum likelihood | study 12 r1 (regime 1) |
 | **3-level HB** | session → subject → population | full posterior (NUTS) | study 08, which did not mix |
 | **2-level HB** | session → subject | full posterior (NUTS) | study 13 (HB-CTT, HB-Hattori) |
-| **2-level EM** | session → subject | Laplace-EM | MEvolve's evaluator; study 12 r3 (EM-CTT, ...) |
+| **2-level EM** | session → subject | Laplace-EM | MEvolve's fitter; study 12 r3 (EM-CTT, ...) |
 
 **2-level model**:
 The model in which each session's parameters vary around the subject's typical values, with no
@@ -64,6 +64,13 @@ population level. MEvolve fits it by Laplace-EM (2-level EM); study 13 samples i
 (2-level HB).
 _Avoid_: session level (reads as each session fitted alone), hierarchical model (2 or 3 levels?),
 random effects, EM alone (GLM-HMMs are also fitted by EM)
+
+**Fitter**:
+The code that fits a program to a subject's sessions under one fitting regime (per subject or 2-level
+EM) and returns its parameters (typical values and spreads, for 2-level EM) and its latent variables on
+every trial. Fitting and reading out latent variables is a use in its own right, not only a step of a
+search; the fitter moves to `aind-dynamic-foraging-models` once gate 4 passes (ADR 0005).
+_Avoid_: evaluator (that is the search's use of the fitter)
 
 **Typical values**:
 The parameter values of a subject around which its sessions vary.
@@ -101,8 +108,13 @@ _Avoid_: generative match
 One LLM call that returns a new program and the hypothesis behind it.
 _Avoid_: sample, mutation
 
+**Evaluator**:
+The search's use of the fitter: fit a program on each subject's fit sessions, score its held-out
+sessions, and return the score and the feedback.
+_Avoid_: fitter
+
 **Evaluation**:
-Fitting and scoring one program on the generation and validation cohorts.
+One run of the evaluator on one program over the generation and validation cohorts.
 _Avoid_: run, trial
 
 **Score**:
