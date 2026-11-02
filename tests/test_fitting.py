@@ -1,4 +1,4 @@
-"""Per-subject and session-level fits on sessions simulated from a known Hattori2019 program."""
+"""Per-subject and 2-level (Laplace-EM) fits on sessions simulated from a known Hattori2019 program."""
 from dataclasses import dataclass
 
 import jax
@@ -71,7 +71,7 @@ def test_marginal_with_tiny_spread_equals_point_score(data):
     assert scoring.pooled(ll, n) == pytest.approx(scoring.pooled(m["log_lik"], m["n_trials"]))
 
 
-def test_session_level_recovers_a_known_spread():
+def test_two_level_recovers_a_known_spread():
     """Sessions whose learning rate varies with a known spread: Laplace-EM recovers that spread
     to within a factor of 2 and keeps the fixed parameters' spreads small."""
     prog = program.literature("hattori2019")
@@ -84,7 +84,7 @@ def test_session_level_recovers_a_known_spread():
         sessions += simulate(prog, p, rng, n_sessions=1, n_trials=400)
     batch = fitting.pad(sessions)
     per = fitting.fit_per_subject(prog, batch, n_starts=2)
-    sl = fitting.fit_session_level(prog, batch, per["x"], max_em=100)
+    sl = fitting.fit_two_level(prog, batch, per["x"], max_em=100)
     sigma = np.exp(np.asarray(sl["log_sigma"]))
     assert sl["converged"]
     assert 0.3 < sigma[0] < 1.2, sigma

@@ -37,15 +37,22 @@ lists.
 `PARAMS` (at least one fitted parameter), `N_LATENT`, `LATENT_NAMES`, `init_latents`, `predict` and
 `update` (`src/mevolve/program.py`); the literature models are in `src/mevolve/programs/literature/`.
 The evaluator fits a program per subject (differential evolution, then L-BFGS and Nelder-Mead) or
-at the session level (Laplace-EM,
-[ADR 0004](docs/adr/0004-session-level-by-laplace-em.md)) and scores held-out sessions, one
+as a 2-level model (session -> subject) fitted by Laplace-EM
+([ADR 0004](docs/adr/0004-two-level-by-laplace-em.md)) and scores held-out sessions, one
 single-threaded process per subject. The gates run as SLURM jobs on a compute node:
 
 ```bash
 python -m mevolve.gate1a --freeze <freeze> --out gate1a.json --workers 64        # programs vs foragers
 python -m mevolve.gate1 --regime subject --model Hattori2019 --freeze <freeze> --studies <studies> --out <dir>
-python -m mevolve.gate1 --regime session --model CompareToThreshold --model Hattori2019 ...       # vs study 13
+python -m mevolve.gate1 --regime 2level --model CompareToThreshold --model Hattori2019 ...       # vs study 13
 python -m mevolve.gate2 --freeze <freeze> --cohorts cohorts.json --model Hattori2019 --model CompareToThreshold --out gate2.json
+```
+
+Reported 2-level scores of the literature models (study 12's regime 2) run Laplace-EM to
+convergence, on any pool of the freeze, from a clean checkout:
+
+```bash
+python -m mevolve.score --model Hattori2019 --pool all --freeze <freeze> --out <dir> --workers 112
 ```
 
 ## What it does
