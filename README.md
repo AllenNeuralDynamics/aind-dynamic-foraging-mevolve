@@ -33,13 +33,17 @@ role, date-order index, task and stage, and a manifest with the settings, the wr
 file digests. It lives on scratch, never in this repo; study 40 records its digests and its cohort
 lists.
 
-**Programs and the evaluator (build steps 3 and 2).** A program is one Python file defining
-`PARAMS` (at least one fitted parameter), `N_LATENT`, `LATENT_NAMES`, `init_latents`, `predict` and
-`update` (`src/mevolve/program.py`); the literature models are in `src/mevolve/programs/literature/`.
-The evaluator fits a program per subject (differential evolution, then L-BFGS and Nelder-Mead) or
-as a 2-level model (session -> subject) fitted by Laplace-EM
-([ADR 0004](docs/adr/0004-two-level-by-laplace-em.md)) and scores held-out sessions, one
-single-threaded process per subject. The gates run as SLURM jobs on a compute node:
+**Programs, the fitter and the evaluator (build steps 3 and 2).** A program is one Python file
+defining `PARAMS` (at least one fitted parameter), `N_LATENT`, `LATENT_NAMES`, `init_latents`,
+`predict` and `update` (`src/mevolve/program.py`); the literature models are in
+`src/mevolve/programs/literature/`. The fitter (`mevolve.fitter.fit`) fits a program to a subject's
+sessions per subject (differential evolution, then L-BFGS and Nelder-Mead) or as a 2-level model
+(session -> subject) fitted by Laplace-EM ([ADR 0004](docs/adr/0004-two-level-by-laplace-em.md)),
+and returns its parameters and, on request, its latent variables on every trial. It moves to
+`aind-dynamic-foraging-models` once gate 4 passes ([ADR 0005](docs/adr/0005-fitter-moves-to-the-models-library.md)).
+The evaluator (`mevolve.evaluate`) is the search's use of it: it fits each subject's fit sessions,
+scores the held-out ones and returns the score and feedback, one single-threaded process per
+subject. The gates run as SLURM jobs on a compute node:
 
 ```bash
 python -m mevolve.gate1a --freeze <freeze> --out gate1a.json --workers 64        # programs vs foragers

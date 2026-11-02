@@ -1,4 +1,6 @@
-"""Evaluate one program on a set of subjects: fit on fit sessions, score score sessions.
+"""The evaluator: the search's use of the fitter (``mevolve.fitter``). For each subject it fits a
+program on the fit sessions, scores the score (held-out) sessions, and returns the score and the
+feedback (split diagnostics, replay fingerprints).
 
 Subjects are independent, so they run in parallel, one single-threaded JAX process each; a
 112-core node evaluates about 100 subjects at once. Each worker receives only its subject's
@@ -38,29 +40,28 @@ def _evaluate_one(args) -> dict:
     program_path, data, regime, seed, n_draws, n_starts, max_em = args
     import jax
 
-    from . import fitting, program, scoring
+    from . import fitter, fitting, program, scoring
     from .fingerprints import fingerprints
 
     t0 = time.time()
     prog = program.load(program_path)
-    fit_batch, score_batch = fitting.pad(data.fit), fitting.pad(data.score)
-    per = fitting.fit_per_subject(prog, fit_batch, n_starts=n_starts, seed=seed)
-    fit_ll, _ = scoring.point_scores(prog, per["x"], fit_batch)
-    out = {"subject_id": data.subject_id, "params": per["params"], "fit_nll": per["nll"],
-           "fit_log_lik": float(fit_ll.sum()), "n_fit_trials": fit_batch.n_trials}
+    f = fitter.fit(prog, data.fit, regime, seed=seed, n_starts=n_starts, max_em=max_em)
+    score_batch = fitting.pad(data.score)
+    fit_ll, _ = scoring.point_scores(prog, f.x, f.batch)
+    out = {"subject_id": data.subject_id, "params": f.params, "fit_nll": f.nll,
+           "fit_log_lik": float(fit_ll.sum()), "n_fit_trials": f.batch.n_trials}
     if regime == "subject":
-        ll, n = scoring.point_scores(prog, per["x"], score_batch)
-        p_right = scoring.point_p_right(prog, per["x"], score_batch)
+        ll, n = scoring.point_scores(prog, f.x, score_batch)
+        p_right = scoring.point_p_right(prog, f.x, score_batch)
     else:
-        sl = fitting.fit_two_level(prog, fit_batch, per["x"], max_em=max_em)
         # common random draws per subject, from a stable hash of its id
         key = jax.random.PRNGKey(seed + zlib.crc32(data.subject_id.encode()) % 100_000)
-        m = scoring.marginal_scores(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
+        m = scoring.marginal_scores(prog, f.mu, f.log_sigma, score_batch, key, n_draws=n_draws)
         ll, n = m["log_lik"], m["n_trials"]
-        p_right = scoring.marginal_p_right(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
-        out.update({"typical_params": sl["typical_params"], "log_sigma": np.asarray(sl["log_sigma"]).tolist(),
+        p_right = scoring.marginal_p_right(prog, f.mu, f.log_sigma, score_batch, key, n_draws=n_draws)
+        out.update({"typical_params": f.typical_params, "log_sigma": np.asarray(f.log_sigma).tolist(),
                     "ess": m["ess"][: len(data.score)].tolist(),
-                    "em_iterations": sl["em_iterations"], "converged": bool(sl["converged"])})
+                    "em_iterations": f.em_iterations, "converged": f.converged})
     k = len(data.score)
     out["fingerprints"] = fingerprints([s for s in data.score],
                                        [p_right[i, : len(s.choices)] for i, s in enumerate(data.score)])
