@@ -22,13 +22,14 @@ from . import fitting
 from .program import Program, replay
 
 REGIMES = ("subject", "2level")
+INNER_ITER = 50      # L-BFGS iterations per session MAP, as in fit_two_level
 
 
 @dataclass
 class Fit:
     """One subject's fit. ``x`` is the per-subject fit on the unconstrained scale; for 2-level,
-    ``mu`` and ``log_sigma`` are the typical values and log spreads on that scale and
-    ``session_x`` each session's parameters (the E-step's MAP)."""
+    ``mu`` and ``log_sigma`` are the typical values and log spreads on that scale, and
+    ``session_x`` each session's parameters: its MAP under the returned ``mu`` and ``log_sigma``."""
     program: Program
     regime: str
     sessions: list
@@ -37,11 +38,24 @@ class Fit:
     nll: float
     mu: jnp.ndarray | None = None
     log_sigma: jnp.ndarray | None = None
-    session_x: jnp.ndarray | None = None
     typical_params: dict | None = None
     em_iterations: int | None = None
     converged: bool | None = None
     batch: fitting.Batch | None = field(default=None, repr=False)
+    theta_last: jnp.ndarray | None = field(default=None, repr=False)   # the last E-step's MAP
+    _session_x: jnp.ndarray | None = field(default=None, repr=False)
+
+    @property
+    def session_x(self) -> jnp.ndarray | None:
+        """The last E-step ran under the previous ``mu`` and ``log_sigma``, so each session's MAP is
+        recomputed once under the returned ones, on first use; the evaluator never asks for it."""
+        if self.regime != "2level":
+            return None
+        if self._session_x is None:
+            theta, _ = fitting._session_map(self.program, self.batch, self.mu, jnp.exp(self.log_sigma),
+                                            self.theta_last, INNER_ITER)
+            self._session_x = theta[: len(self.sessions)]      # theta has a row per padded session
+        return self._session_x
 
     def session_params(self) -> list[dict]:
         """Each fitted session's parameters: the per-subject set, or the session's own (2-level)."""
@@ -84,10 +98,8 @@ def fit(program: Program, sessions: list, regime: str = "subject", *, seed: int 
     per = fitting.fit_per_subject(program, batch, n_starts=n_starts, seed=seed)
     result = Fit(program, regime, list(sessions), per["x"], per["params"], per["nll"], batch=batch)
     if regime == "2level":
-        sl = fitting.fit_two_level(program, batch, per["x"], max_em=max_em)
-        # theta has a row per padded session; keep the real ones
-        result.mu, result.log_sigma = sl["mu"], sl["log_sigma"]
-        result.session_x = sl["theta"][: len(sessions)]
+        sl = fitting.fit_two_level(program, batch, per["x"], max_em=max_em, inner_iter=INNER_ITER)
+        result.mu, result.log_sigma, result.theta_last = sl["mu"], sl["log_sigma"], sl["theta"]
         result.typical_params = sl["typical_params"]
         result.em_iterations, result.converged = sl["em_iterations"], bool(sl["converged"])
     return result

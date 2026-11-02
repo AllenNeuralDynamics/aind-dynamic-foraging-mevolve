@@ -39,6 +39,16 @@ def test_two_level_fit_gives_each_session_its_own_parameters(sessions):
     assert len({round(p["learn_rate_rew"], 12) for p in per_session}) > 1    # sessions differ
 
 
+def test_capped_two_level_session_parameters_follow_the_returned_typical_values(sessions):
+    """With one EM iteration, the last E-step ran under the start values; the exposed session
+    parameters are each session's MAP under the mu and sigma the Fit returns."""
+    prog, sess = sessions
+    f = fitter.fit(prog, sess, "2level", n_starts=2, max_em=1)
+    theta, _ = fitting._session_map(prog, f.batch, f.mu, np.exp(f.log_sigma), f.theta_last, fitter.INNER_ITER)
+    np.testing.assert_allclose(np.asarray(f.session_x), np.asarray(theta)[: len(sess)])
+    assert not np.allclose(np.asarray(f.session_x), np.asarray(f.theta_last)[: len(sess)])
+
+
 def test_unknown_regime_or_nonpositive_em_cap_is_refused_before_fitting(sessions, monkeypatch):
     prog, sess = sessions
     monkeypatch.setattr(fitting, "fit_per_subject", lambda *a, **k: pytest.fail("fitted before refusing"))
