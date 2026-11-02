@@ -7,14 +7,14 @@
         Pass (ADR 0004 of study 40): pooled held-out likelihood within 0.0002 of the reference or
         better, and for at least 95% of subjects a fit-session log likelihood no worse than the
         reference's by more than 0.5 nats.
-    regime "session" (1c): session-level fit (Laplace-EM) and session marginal against study 13's
-        HB-CTT and HB-Hattori (``ctt_final_runs.json``, ``hattori_final_runs.json``,
-        ``r5_ctt_pooled.json``). Pass (ADR 0004): each model's pooled score within 0.001 of the
+    regime "2level" (1c): the 2-level model, fitted by Laplace-EM, and the session marginal
+        against study 13's HB-CTT and HB-Hattori (``ctt_final_runs.json``,
+        ``hattori_final_runs.json``, ``r5_ctt_pooled.json``). Pass (ADR 0004): each model's pooled score within 0.001 of the
         reference, and the CompareToThreshold - Hattori2019 gap within 0.0005 of the reference gap.
 
 Writes one JSON per model and regime with every subject's record and the comparison:
 
-    python -m mevolve.gate1 --regime session --model CompareToThreshold --model Hattori2019 \\
+    python -m mevolve.gate1 --regime 2level --model CompareToThreshold --model Hattori2019 \\
         --freeze <dir> --studies <studies checkout> --out <dir> --workers 64
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ def compare_study12(records: list[dict], ref: dict) -> dict:
 
 
 def check_1c(comparisons: dict[str, dict]) -> dict:
-    """Gate 1c from the session-level comparisons by model; the gap needs both models."""
+    """Gate 1c from the 2-level comparisons by model; the gap needs both models."""
     out = {m: abs(c["pooled_diff"]) <= POOLED_TOL_1C for m, c in comparisons.items()}
     if {"CompareToThreshold", "Hattori2019"} <= comparisons.keys():
         ctt, hat = comparisons["CompareToThreshold"], comparisons["Hattori2019"]
@@ -106,7 +106,7 @@ def compare(records: list[dict], ref_per: dict, ref_pooled: float) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Gates 1b and 1c on the test subjects")
-    parser.add_argument("--regime", choices=["subject", "session"], required=True)
+    parser.add_argument("--regime", choices=["subject", "2level"], required=True)
     parser.add_argument("--model", action="append", required=True,
                         help="study 12 name, repeatable; NAME=PATH scores another program against NAME's reference")
     parser.add_argument("--freeze", type=Path, required=True)
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             ref_per, ref_pooled, sources = reference(model, args.regime, args.studies)
             comparison = compare(records, ref_per, ref_pooled)
-            if args.regime == "session":
+            if args.regime == "2level":
                 comparison["ok"] = check_1c({model: comparison})[model]
                 session[model] = comparison
             source_root = args.studies
@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> None:
               f"(diff {c['pooled_diff']:+.5f}){extra}, wall {result['wall_seconds']:.0f} s", flush=True)
     gap = check_1c(session).get("gap")
     if gap:
-        (args.out / "session_gap.json").write_text(json.dumps(gap, indent=1) + "\n")
+        (args.out / "2level_gap.json").write_text(json.dumps(gap, indent=1) + "\n")
         print(f"CompareToThreshold - Hattori2019 gap {gap['gap']:.5f} vs {gap['gap_reference']:.5f} "
               f"(diff {gap['gap_diff']:+.5f}), {'PASS' if gap['ok'] else 'FAIL'}", flush=True)
         if not gap["ok"]:

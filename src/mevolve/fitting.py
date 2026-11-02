@@ -1,11 +1,12 @@
-"""Fit a program's parameters to one subject: per subject (MLE) or at the session level (MAP).
+"""Fit a program's parameters to one subject: per subject (MLE), or as a 2-level model
+(session -> subject) fitted by Laplace-EM.
 
 Every bounded parameter is fitted on an unconstrained scale, ``low + (high - low) * Phi(x)``, so a
 standard normal on ``x`` is uniform on the parameter's bounds, as in study 13's hierarchical models.
 Sessions are padded into one array per subject and masked, so a fit is one jitted L-BFGS run.
 
 - **Per subject**: one parameter set for all of a subject's fit sessions, by maximum likelihood.
-- **Session level**: each fit session's parameters ``theta_s ~ N(mu, sigma^2)`` vary around the
+- **2-level** (session -> subject): each fit session's parameters ``theta_s ~ N(mu, sigma^2)`` vary around the
   subject's typical values ``mu``, with study 13's fixed hyperprior ``mu ~ N(0, 1)`` and
   ``log sigma ~ N(-1, 1)``. ``mu`` and ``sigma`` are fitted by Laplace-EM (the hierarchical EM of
   Huys et al. 2011), which maximizes the likelihood with each session's parameters integrated out.
@@ -304,8 +305,8 @@ def _m_step(theta, var, live, log_sigma):
     return mu, 0.5 * (lo + hi)
 
 
-def fit_session_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_em: int = 20,
-                      tol: float = 1e-3, inner_iter: int = 50):
+def fit_two_level(program: Program, batch: Batch, x_start: jnp.ndarray, max_em: int = 20,
+                  tol: float = 1e-3, inner_iter: int = 50):
     """Typical values ``mu`` and log spreads by Laplace-EM, started from a per-subject fit.
 
     EM converges linearly, but the held-out score settles long before the spreads of poorly

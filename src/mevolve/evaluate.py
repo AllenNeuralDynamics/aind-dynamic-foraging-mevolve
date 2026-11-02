@@ -5,7 +5,8 @@ Subjects are independent, so they run in parallel, one single-threaded JAX proce
 sessions, never the whole freeze.
 
     regime "subject":  per-subject MLE, point scores
-    regime "session":  per-subject MLE as a start, then the session-level MAP, session marginal
+    regime "2level":   per-subject MLE as a start, then the 2-level model (session -> subject)
+                       fitted by Laplace-EM, scored by the session marginal
 """
 from __future__ import annotations
 
@@ -51,7 +52,7 @@ def _evaluate_one(args) -> dict:
         ll, n = scoring.point_scores(prog, per["x"], score_batch)
         p_right = scoring.point_p_right(prog, per["x"], score_batch)
     else:
-        sl = fitting.fit_session_level(prog, fit_batch, per["x"], max_em=max_em)
+        sl = fitting.fit_two_level(prog, fit_batch, per["x"], max_em=max_em)
         # common random draws per subject, from a stable hash of its id
         key = jax.random.PRNGKey(seed + zlib.crc32(data.subject_id.encode()) % 100_000)
         m = scoring.marginal_scores(prog, sl["mu"], sl["log_sigma"], score_batch, key, n_draws=n_draws)
@@ -71,11 +72,11 @@ def _evaluate_one(args) -> dict:
     return out
 
 
-def evaluate(program_path, subjects: list[SubjectData], regime: str = "session", seed: int = 0,
+def evaluate(program_path, subjects: list[SubjectData], regime: str = "2level", seed: int = 0,
              n_draws: int = 2048, n_starts: int = 8, workers: int | None = None,
              max_em: int = 20) -> list[dict]:
     """Fit and score every subject; returns one record per subject, in input order. ``max_em``
-    caps the session-level EM: 20 for the search, more to run it to convergence for reported
+    caps Laplace-EM: 20 for the search, more to run it to convergence for reported
     scores (ADR 0004)."""
     jobs = [(str(program_path), d, regime, seed, n_draws, n_starts, max_em) for d in subjects]
     workers = workers or min(len(jobs), os.cpu_count() or 1)

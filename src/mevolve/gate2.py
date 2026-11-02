@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> None:
         repeats = 2 if i == 0 else 1
         for rep in range(repeats):
             t0 = time.time()
-            records = evaluate.evaluate(path, data, regime="session", workers=args.workers)
+            records = evaluate.evaluate(path, data, regime="2level", workers=args.workers)
             wall = time.time() - t0
             v = [r for r in records if r["subject_id"] in set(val)]
             score = 100 * np.exp(sum(r["log_lik"] for r in v) / sum(r["n_trials"] for r in v))
