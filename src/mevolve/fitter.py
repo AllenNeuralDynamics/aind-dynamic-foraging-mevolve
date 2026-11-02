@@ -78,6 +78,8 @@ def fit(program: Program, sessions: list, regime: str = "subject", *, seed: int 
     """
     if regime not in REGIMES:
         raise ValueError(f"regime must be one of {REGIMES}, not {regime!r}")
+    if regime == "2level" and max_em < 1:
+        raise ValueError(f"max_em must be at least 1, not {max_em}")
     batch = fitting.pad(sessions)
     per = fitting.fit_per_subject(program, batch, n_starts=n_starts, seed=seed)
     result = Fit(program, regime, list(sessions), per["x"], per["params"], per["nll"], batch=batch)

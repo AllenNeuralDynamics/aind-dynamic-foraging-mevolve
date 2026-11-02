@@ -38,10 +38,14 @@ def test_two_level_fit_gives_each_session_its_own_parameters(sessions):
     assert len({round(p["learn_rate_rew"], 12) for p in per_session}) > 1    # sessions differ
 
 
-def test_unknown_regime_is_refused(sessions):
+def test_unknown_regime_or_nonpositive_em_cap_is_refused_before_fitting(sessions, monkeypatch):
     prog, sess = sessions
+    monkeypatch.setattr(fitting, "fit_per_subject", lambda *a, **k: pytest.fail("fitted before refusing"))
     with pytest.raises(ValueError, match="regime"):
         fitter.fit(prog, sess, "session")
+    for cap in (0, -2):
+        with pytest.raises(ValueError, match="max_em"):
+            fitter.fit(prog, sess, "2level", max_em=cap)
 
 
 def test_evaluator_scores_held_out_sessions_at_the_fitters_parameters():
