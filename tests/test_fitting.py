@@ -209,4 +209,4 @@ def test_round_trip_keeps_a_parameter_on_its_bound_exactly(data):
     assert float(back[names[0]]) == lo[0] and float(back[names[1]]) == hi[1]
     assert all(float(back[k]) == pytest.approx(v, rel=1e-12) for k, v in p.items())
     near = dict(TRUE, **{names[0]: float(lo[0] + 1e-20 * (hi[0] - lo[0]))})     # inside, closer than 1e-12
-    assert float(fitting.to_params(prog, fitting.from_params(prog, near))[names[0]]) == pytest.approx(near[names[0]], rel=1e-6)
+    assert float(fitting.to_params(prog, fitting.from_params(prog, near))[names[0]]) == pytest.approx(near[names[0]], rel=1e-6, abs=0.0)
