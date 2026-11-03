@@ -196,3 +196,17 @@ def test_each_de_restart_contributes_its_best_members(data, monkeypatch):
         expected = np.vstack([population(10 + r)[:per_run] for r in range(restarts)])
         assert np.allclose(np.vstack(x0s[:len(expected)]), expected, atol=1e-9)
         assert len(fit["nll_starts"]) == len(expected)
+
+
+def test_round_trip_keeps_a_parameter_on_its_bound_exactly(data):
+    """Issue #30: a stored fit with a parameter on a bound must replay at that bound, not 1e-12
+    inside it (Grossman-MetaLearning's forgetting_factor at 0 lost up to 28 nats)."""
+    prog, _ = data
+    lo, hi = (np.asarray(a) for a in fitting.bounds_arrays(prog))
+    names = list(prog.params)
+    p = dict(TRUE, **{names[0]: float(lo[0]), names[1]: float(hi[1])})
+    back = fitting.to_params(prog, fitting.from_params(prog, p))
+    assert float(back[names[0]]) == lo[0] and float(back[names[1]]) == hi[1]
+    assert all(float(back[k]) == pytest.approx(v, rel=1e-12) for k, v in p.items())
+    near = dict(TRUE, **{names[0]: float(lo[0] + 1e-20 * (hi[0] - lo[0]))})     # inside, closer than 1e-12
+    assert float(fitting.to_params(prog, fitting.from_params(prog, near))[names[0]]) == pytest.approx(near[names[0]], rel=1e-6, abs=0.0)
