@@ -85,7 +85,8 @@ def _die_with_parent() -> None:
         ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)    # 1 = PR_SET_PDEATHSIG
     except OSError:      # not Linux: nothing to set
         return
-    if os.getppid() == 1:      # the parent died before prctl took effect
+    parent = mp.parent_process()
+    if parent is not None and os.getppid() != parent.pid:    # the parent died before prctl took effect
         os._exit(1)
 
 
