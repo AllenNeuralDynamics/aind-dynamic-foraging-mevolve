@@ -92,9 +92,13 @@ def to_params(program: Program, x: jnp.ndarray) -> dict:
 
 
 def from_params(program: Program, p: dict) -> jnp.ndarray:
+    """Bounded parameters by name -> the unconstrained vector, with no clipping inside the bounds:
+    a stored fit replays at its own values, however close to a bound (issue #30). A parameter on a
+    bound maps to -inf or +inf, which ``to_params`` maps back exactly; such a vector is for replay
+    and scoring, not a start for gradient fitting."""
     lo, hi = bounds_arrays(program)
     u = (jnp.asarray([p[k] for k in program.params]) - lo) / (hi - lo)
-    return norm.ppf(jnp.clip(u, 1e-12, 1 - 1e-12))
+    return norm.ppf(jnp.clip(u, 0.0, 1.0))
 
 
 def trial_logp(program: Program, p: dict, choices, rewards, facts) -> jnp.ndarray:
