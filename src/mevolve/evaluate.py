@@ -76,6 +76,20 @@ def _evaluate_one(args) -> dict:
     return out
 
 
+def _die_with_parent() -> None:
+    """Pool initializer: the worker gets SIGTERM when its parent dies (Linux PR_SET_PDEATHSIG), so an
+    evaluation killed by the search's time limit leaves no orphaned workers holding the node."""
+    import ctypes
+    import signal
+    try:
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)    # 1 = PR_SET_PDEATHSIG
+    except OSError:      # not Linux: nothing to set
+        return
+    parent = mp.parent_process()
+    if parent is not None and os.getppid() != parent.pid:    # the parent died before prctl took effect
+        os._exit(1)
+
+
 def program_score(records: list[dict]) -> dict:
     """A program's pooled held-out likelihood per trial from its subjects' 2-level records.
 
@@ -105,7 +119,7 @@ def evaluate(program_path, subjects: list[SubjectData], regime: str = "2level", 
     saved = {k: os.environ.get(k) for k in WORKER_ENV}
     os.environ.update(WORKER_ENV)      # spawned workers read these at start
     try:
-        with mp.get_context("spawn").Pool(workers) as pool:
+        with mp.get_context("spawn").Pool(workers, initializer=_die_with_parent) as pool:
             return pool.map(_evaluate_one, jobs, chunksize=1)
     finally:
         for k, v in saved.items():
