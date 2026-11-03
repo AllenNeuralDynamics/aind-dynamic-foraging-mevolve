@@ -83,3 +83,5 @@ def test_program_score_falls_back_when_the_two_level_fit_scores_lower():
     g, b = evaluate.program_score(good), evaluate.program_score(bad)
     assert g["score"] == g["two_level"] and not g["two_level_failed"]
     assert b["score"] == b["per_subject"] == pytest.approx(np.exp(-0.65)) and b["two_level_failed"]
+    nan = evaluate.program_score([{"log_lik": float("nan"), "per_subject_log_lik": -65.0, "n_trials": 100}])
+    assert nan["two_level_failed"] and nan["score"] == pytest.approx(np.exp(-0.65))

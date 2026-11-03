@@ -87,7 +87,7 @@ def program_score(records: list[dict]) -> dict:
     n = sum(r["n_trials"] for r in records)
     two_level = float(np.exp(sum(r["log_lik"] for r in records) / n))
     per_subject = float(np.exp(sum(r["per_subject_log_lik"] for r in records) / n))
-    failed = two_level < per_subject
+    failed = not np.isfinite(two_level) or two_level < per_subject     # NaN or lower: the fit failed
     return {"score": per_subject if failed else two_level, "two_level": two_level,
             "per_subject": per_subject, "two_level_failed": failed}
 
