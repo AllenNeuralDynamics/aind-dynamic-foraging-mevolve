@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from mevolve import evaluate, program, score
 
@@ -66,3 +67,21 @@ def test_score_cli_rejects_a_nonpositive_em_cap_or_draw_count(tmp_path):
             with pytest.raises(SystemExit):
                 score.main(["--freeze", str(tmp_path), "--out", str(tmp_path / "out"), flag, value])
     assert not (tmp_path / "out").exists()
+
+
+def test_two_level_records_carry_the_per_subject_held_out_score():
+    path = program.LITERATURE_DIR / "hattori2019.py"
+    d = _subject(0)
+    rec, = evaluate.evaluate(path, [d], regime="2level", n_draws=8, n_starts=2, workers=1, max_em=2)
+    sub, = evaluate.evaluate(path, [d], regime="subject", n_starts=2, workers=1)
+    assert rec["per_subject_log_lik"] == sub["log_lik"]       # the same per-subject fit, scored the same way
+
+
+def test_program_score_falls_back_when_the_two_level_fit_scores_lower():
+    good = [{"log_lik": -60.0, "per_subject_log_lik": -65.0, "n_trials": 100}]
+    bad = [{"log_lik": -80.0, "per_subject_log_lik": -65.0, "n_trials": 100}]
+    g, b = evaluate.program_score(good), evaluate.program_score(bad)
+    assert g["score"] == g["two_level"] and not g["two_level_failed"]
+    assert b["score"] == b["per_subject"] == pytest.approx(np.exp(-0.65)) and b["two_level_failed"]
+    nan = evaluate.program_score([{"log_lik": float("nan"), "per_subject_log_lik": -65.0, "n_trials": 100}])
+    assert nan["two_level_failed"] and nan["score"] == pytest.approx(np.exp(-0.65))

@@ -59,7 +59,10 @@ def _evaluate_one(args) -> dict:
         m = scoring.marginal_scores(prog, f.mu, f.log_sigma, score_batch, key, n_draws=n_draws)
         ll, n = m["log_lik"], m["n_trials"]
         p_right = scoring.marginal_p_right(prog, f.mu, f.log_sigma, score_batch, key, n_draws=n_draws)
+        # the per-subject fit at the same held-out sessions: the 2-level model's spread-0 limit
+        ps_ll, _ = scoring.point_scores(prog, f.x, score_batch)
         out.update({"typical_params": f.typical_params, "log_sigma": np.asarray(f.log_sigma).tolist(),
+                    "per_subject_log_lik": float(ps_ll[: len(data.score)].sum()),
                     "ess": m["ess"][: len(data.score)].tolist(),
                     "em_iterations": f.em_iterations, "converged": f.converged})
     k = len(data.score)
@@ -71,6 +74,22 @@ def _evaluate_one(args) -> dict:
                 "session_n_trials": n[:k].astype(int).tolist(), "log_lik": float(ll[:k].sum()),
                 "n_trials": int(n[:k].sum()), "seconds": time.time() - t0})
     return out
+
+
+def program_score(records: list[dict]) -> dict:
+    """A program's pooled held-out likelihood per trial from its subjects' 2-level records.
+
+    The 2-level model contains the per-subject model (spread 0), so a pooled 2-level score below
+    the pooled per-subject score means the 2-level fit failed, as it does on stepped or flat
+    likelihoods (study 12 r3: Rescorla-Wagner, LossCounting, Grossman-MetaLearning). The program
+    then keeps its per-subject score, flagged, rather than being lost to the fitter.
+    """
+    n = sum(r["n_trials"] for r in records)
+    two_level = float(np.exp(sum(r["log_lik"] for r in records) / n))
+    per_subject = float(np.exp(sum(r["per_subject_log_lik"] for r in records) / n))
+    failed = not np.isfinite(two_level) or two_level < per_subject     # NaN or lower: the fit failed
+    return {"score": per_subject if failed else two_level, "two_level": two_level,
+            "per_subject": per_subject, "two_level_failed": failed}
 
 
 def evaluate(program_path, subjects: list[SubjectData], regime: str = "2level", seed: int = 0,
