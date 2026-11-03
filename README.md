@@ -50,6 +50,7 @@ python -m mevolve.gate1a --freeze <freeze> --out gate1a.json --workers 64       
 python -m mevolve.gate1 --regime subject --model Hattori2019 --freeze <freeze> --studies <studies> --out <dir>
 python -m mevolve.gate1 --regime 2level --model CompareToThreshold --model Hattori2019 ...       # vs study 13
 python -m mevolve.gate2 --freeze <freeze> --cohorts cohorts.json --model Hattori2019 --model CompareToThreshold --out gate2.json
+python -m mevolve.gate4 --freeze <freeze> --cohorts cohorts.json --studies <studies> --out <dir> --workers 56   # recovery
 ```
 
 Reported 2-level scores of the literature models (study 12's regime 2) run Laplace-EM to
