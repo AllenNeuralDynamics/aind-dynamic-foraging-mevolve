@@ -91,6 +91,10 @@ def evaluate_program(program_path: Path, freeze_dir: Path, cohorts_path: Path, g
     t0 = time.time()
     shape = check_source(Path(program_path).read_text())
     prog = program.load(program_path)       # executes the candidate: only after the checks
+    if (len(prog.params), prog.n_latent) != (shape["n_params"], shape["n_latent"]):
+        from mevolve.search.checks import ProgramRejected
+        raise ProgramRejected(f"the loaded program has {len(prog.params)} parameters and {prog.n_latent} latent "
+                              f"variables, not the {shape['n_params']} and {shape['n_latent']} its literals declare")
     cohorts = json.loads(Path(cohorts_path).read_text())["cohorts"]
     freeze = Freeze(freeze_dir)
     gen_ids, val_ids = cohorts[generation], cohorts[validation]

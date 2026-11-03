@@ -2,7 +2,7 @@
 
 A candidate is code Claude wrote, and loading it executes it. So its source is parsed, never run,
 until it passes: imports only from jax and math, no file, process or introspection access, no
-dunder attributes. The interface limits (at most 8 parameters, at most 6 latent variables) are read
+dunder names or attributes (``__builtins__["open"]`` would otherwise reach the real builtins). The interface limits (at most 8 parameters, at most 6 latent variables) are read
 from the parsed literals too, so an oversized program is rejected before fitting.
 """
 from __future__ import annotations
@@ -40,8 +40,10 @@ def check_source(source: str) -> dict:
         elif isinstance(node, ast.ImportFrom):
             if node.level or not _module_allowed(node.module or ""):
                 raise ProgramRejected(f"import from {node.module!r}: only jax and math may be imported")
-        elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Name) and (node.id in FORBIDDEN_NAMES or node.id.startswith("__")):
             raise ProgramRejected(f"use of {node.id!r} is not allowed in a program")
+        elif isinstance(node, ast.alias) and (node.name.startswith("__") or (node.asname or "").startswith("__")):
+            raise ProgramRejected(f"import of {node.name!r} as {node.asname!r}: dunder names are not allowed")
         elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             raise ProgramRejected(f"access to {node.attr!r} is not allowed in a program")
         elif isinstance(node, ast.Attribute) and node.attr == "config" and _root_name(node.value) == "jax":

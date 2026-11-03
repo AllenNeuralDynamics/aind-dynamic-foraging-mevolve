@@ -126,3 +126,12 @@ def test_install_replaces_shinkas_call(tmp_path):
 
 def test_system_without_the_prefix_is_sent_whole():
     assert claude.system_blocks("other", "TASK") == [{"type": "text", "text": "other"}]
+
+
+def test_retryable_errors_are_recorded_and_re_raised(tmp_path):
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    error = anthropic.RateLimitError("slow down", response=httpx.Response(429, request=request), body=None)
+    with pytest.raises(anthropic.RateLimitError):
+        run(FakeClient(error), settings(tmp_path))
+    entry = json.loads((tmp_path / "ledger.jsonl").read_text())
+    assert entry["retryable"] is True and "RateLimitError" in entry["error"]

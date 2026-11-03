@@ -109,8 +109,12 @@ async def query_anthropic_async(client, model, msg, system_msg, msg_history, out
             response = await stream.get_final_message()
     except NOT_RETRYABLE as e:
         _record(s.ledger, {"time": t0, "model": model, "effort": s.effort, "error": f"{type(e).__name__}: {e}",
-                           "cost": 0.0})
+                           "retryable": False, "cost": 0.0})
         raise NonRetryableLLMError(f"{type(e).__name__}: {e}") from e
+    except anthropic.APIError as e:     # rate limits, timeouts, 5xx: Shinka may retry; the ledger keeps each
+        _record(s.ledger, {"time": t0, "model": model, "effort": s.effort, "error": f"{type(e).__name__}: {e}",
+                           "retryable": True, "cost": 0.0})
+        raise
     usage = response.usage
     dollars = cost(model, usage)
     content, thought = split_content_blocks(response)

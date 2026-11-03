@@ -81,3 +81,14 @@ def test_eval_script_removes_secrets_before_rejecting(tmp_path, monkeypatch):
     import os
     assert "ANTHROPIC_API_KEY" not in os.environ
     assert "only jax" in json.loads((tmp_path / "r" / "correct.json").read_text())["error"]
+
+
+def test_a_parameter_added_after_the_literals_is_refused(tmp_path):
+    sneaky = seeds.TEMPLATE.replace('N_LATENT = 1', 'PARAMS.update({"extra": (0.0, 1.0)})\nN_LATENT = 1')
+    path = tmp_path / "main.py"
+    path.write_text(sneaky)
+    shinka_eval.main(["--program_path", str(path), "--results_dir", str(tmp_path / "r"), "--freeze", str(tmp_path),
+                      "--cohorts", str(tmp_path / "c.json"), "--generation", "g", "--validation", "v",
+                      "--workers", "1"])
+    error = json.loads((tmp_path / "r" / "correct.json").read_text())["error"]
+    assert "3 parameters" in error and "the 2" in error

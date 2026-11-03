@@ -24,6 +24,8 @@ import sys
 import time
 from pathlib import Path
 
+WANDB_ENTITY, WANDB_PROJECT = "NeuralDynamics", "aind-dynamic-foraging-model"     # MEvolve ADR 0003
+
 DEFAULTS = {
     "results_dir": None, "out_dir": None, "freeze": None, "cohorts": None,
     "generation": None, "validation": None, "workers": 16, "max_em": 20, "n_draws": 2048,
@@ -32,7 +34,8 @@ DEFAULTS = {
     "seed_cache": None, "library_in_prompt": True,
     "max_evaluation_jobs": 3, "max_proposal_jobs": 3, "migration_interval": 10, "migration_rate": 0.1,
     "archive_size": 40, "eval_time": "02:00:00", "patch_types": None,
-    "wandb": None,      # {"entity", "project", "group", "name", "mode", "notes"} or None for no W&B
+    "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: a failed reply costs one call, not up to 9
+    "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
 }
 
@@ -80,12 +83,26 @@ def write_pricing_snapshot(results_dir: Path) -> Path:
     return write_run_pricing_snapshot(snapshot, results_dir)
 
 
+def evaluator_digest() -> str:
+    """sha256 over MEvolve's evaluator source (every module outside ``search``), so cached seed
+    scores are recomputed whenever the fitter, scoring or ``program_score`` changes."""
+    import mevolve
+
+    root = Path(mevolve.__file__).parent
+    h = hashlib.sha256()
+    for path in sorted(root.glob("*.py")):
+        h.update(path.name.encode() + path.read_bytes())
+    return h.hexdigest()
+
+
 def seed_metrics(name: str, code: str, config: dict) -> dict:
-    """A literature seed's evaluation, cached by code and evaluator settings."""
+    """A literature seed's evaluation, cached by code, data, cohorts, evaluator source and settings."""
     from .shinka_eval import evaluate_program
 
     key = hashlib.sha256(json.dumps([code, Path(config["cohorts"]).read_text(), config["generation"],
-                                     config["validation"], config["max_em"], config["n_draws"]]).encode()).hexdigest()[:16]
+                                     config["validation"], config["max_em"], config["n_draws"],
+                                     (Path(config["freeze"]) / "manifest.json").read_text(),
+                                     evaluator_digest()]).encode()).hexdigest()[:16]
     cache = Path(config["seed_cache"]) / f"{name}_{key}.json" if config["seed_cache"] else None
     if cache and cache.exists():
         return json.loads(cache.read_text())
@@ -121,9 +138,10 @@ def build_runner(config: dict, task_message: str):
         init_program_path=str(init_path), results_dir=str(results_dir), use_text_feedback=True,
         **({"patch_types": config["patch_types"], "patch_type_probs": [1 / len(config["patch_types"])] * len(config["patch_types"])}
            if config["patch_types"] else {}),
-        max_api_costs=config["max_usd"],
-        enable_wandb_logging=bool(wandb), wandb_project=wandb.get("project", "shinka-evolve"),
-        wandb_entity=wandb.get("entity"), wandb_group=wandb.get("group"), wandb_name=wandb.get("name"),
+        max_api_costs=config["max_usd"], max_patch_resamples=config["max_patch_resamples"],
+        max_novelty_attempts=config["max_novelty_attempts"], max_patch_attempts=1,
+        enable_wandb_logging=bool(wandb), wandb_project=wandb.get("project", WANDB_PROJECT),
+        wandb_entity=wandb.get("entity", WANDB_ENTITY), wandb_group=wandb.get("group"), wandb_name=wandb.get("name"),
         wandb_mode=wandb.get("mode"), wandb_notes=wandb.get("notes"), wandb_tags=["mevolve"],
         wandb_config={"mevolve": {k: v for k, v in config.items() if k != "wandb"}},
     )
@@ -231,13 +249,21 @@ def main(argv: list[str] | None = None) -> int:
     seeds.install_island_patch()
     from shinka.database import DatabaseConfig
     seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed)
-    runner, _ = build_runner(config, task_message)
-    if not args.dry:
-        runner.run()
-    summary = summarize(config, started)
-    print(json.dumps({k: summary[k] for k in ("calls", "cost_usd", "stop_reasons", "islands")}, default=str), flush=True)
-    if config["out_dir"]:
-        shutil.copytree(results_dir, Path(config["out_dir"]), dirs_exist_ok=True)
+    try:
+        runner, _ = build_runner(config, task_message)
+        if not args.dry:
+            runner.run()
+        summary = summarize(config, started)
+        from .report import write_run_files
+        write_run_files(results_dir)          # proposals.csv and run_report.md
+        print(json.dumps({k: summary[k] for k in ("calls", "cost_usd", "stop_reasons", "islands")}, default=str),
+              flush=True)
+    finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
+        if config["out_dir"]:
+            try:
+                shutil.copytree(results_dir, Path(config["out_dir"]), dirs_exist_ok=True)
+            except OSError as e:
+                print(f"copy to {config['out_dir']} failed: {e}", file=sys.stderr, flush=True)
     return 0
 
 
