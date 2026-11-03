@@ -142,6 +142,8 @@ def main(argv: list[str] | None = None) -> None:
     studies_sha = _git_sha(args.studies.resolve())
     freeze = Freeze(args.freeze)
     subjects = json.loads(args.cohorts.read_text())["cohorts"]["generation"][:N_SUBJECTS]
+    if len(subjects) < N_SUBJECTS:
+        parser.error(f"the generation cohort has {len(subjects)} subjects; gate 4 needs {N_SUBJECTS} (#36)")
     args.out.mkdir(parents=True, exist_ok=True)
     digest = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()     # noqa: E731
     result = {"mevolve_git_sha": sha, "studies_git_sha": studies_sha, "seed": args.seed, "max_em": MAX_EM,
