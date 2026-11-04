@@ -42,7 +42,8 @@ decisions with their reasons are in [`docs/adr/`](docs/adr/); read both before c
   MEvolve's jobs export them as `WANDB_API_KEY` and `ANTHROPIC_API_KEY` themselves, so `~/.netrc`
   keeps the personal W&B key for the rest of the stack.
 - Never put a key in this repo, an sbatch file, a log, a commit message or a chat.
-- W&B: entity `NeuralDynamics`, project `aind-dynamic-foraging-model`.
+- W&B: entity `NeuralDynamics`, project `dfbfm-mevolve` for new runs; runs logged before 2026-11-03
+  stay in `aind-dynamic-foraging-model`, and readers of them keep that project (ADR 0003).
 
 ## Coding principles
 
