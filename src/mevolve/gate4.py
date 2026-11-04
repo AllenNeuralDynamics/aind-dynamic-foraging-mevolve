@@ -11,6 +11,14 @@ The simulated subjects are saved with their generating parameters for gate 4's s
 
     python -m mevolve.gate4 --freeze <dir> --cohorts cohorts.json --studies <studies checkout> \\
         --out <dir> --workers 56
+
+The second half searches on simulated generation and validation subjects, and checks the winner on
+held-out ones. ``--simulate-only`` writes those without fitting them, templated on other real
+subjects (``--cohort``, ``--offset``), each with its own random stream and a manifest of digests;
+``load_simulated`` reads any saved file back as the evaluator's subjects.
+
+    python -m mevolve.gate4 --freeze <dir> --cohorts cohorts.json --studies <studies checkout> \\
+        --out <dir> --model Hattori2019 --cohort validation --offset 0 --tag validation --simulate-only
 """
 from __future__ import annotations
 
@@ -21,6 +29,7 @@ import hashlib
 import json
 import sys
 import time
+import zlib
 from pathlib import Path
 
 import jax
@@ -37,6 +46,7 @@ N_SUBJECTS = 24
 MAX_EM = 100
 TWO_LEVEL = "studies/12-cognitive-literature-leaderboard/analysis/two_level_em_fits.csv"
 PER_SUBJECT = "studies/12-cognitive-literature-leaderboard/analysis/per_subject_fits.csv"
+SIM_TASK = "Coupled Baiting"    # simulated sessions play the coupled block task with baiting
 OFF_BOUND = 3.0      # |mu| on the probit scale up to which a typical value is off its bounds
 # off a bound, the median |recovered - true mu| (probit scale) must not exceed the per-subject fit's on
 # the same data (#36, amended 2026-11-03: a fixed 0.1 was tighter than ~11 sessions allow)
@@ -79,7 +89,7 @@ def simulate(prog, mu, log_sigma, real: list, rng, step) -> list:
     for r in real:
         p = fitting.to_params(prog, mu + np.exp(log_sigma) * rng.normal(size=len(mu)))
         s = dataclasses.replace(r, subject_id=f"sim-{r.subject_id}", session_id=f"sim-{r.session_id}",
-                                task="Coupled Baiting")
+                                task=SIM_TASK)
         task = CoupledBlockTask(reward_baiting=True, num_trials=len(r.choices), seed=int(rng.integers(2**31)))
         task.reset()
         latents = prog.init_latents(p, fitting.session_facts(s))
@@ -93,6 +103,34 @@ def simulate(prog, mu, log_sigma, real: list, rng, step) -> list:
         sessions.append(dataclasses.replace(s, choices=choices, rewards=rewards))
         params.append({k: float(v) for k, v in p.items()})
     return sessions, params
+
+
+def load_simulated(path: Path | str) -> list:
+    """Subjects saved by ``main``, as ``evaluate.SubjectData`` with their fit and score sessions in
+    date order (the files keep no task: every simulated session is ``SIM_TASK``)."""
+    from .data import Session
+
+    with gzip.open(path, "rt") as f:
+        saved = json.load(f)
+    out = []
+    for subject in saved["subjects"]:
+        sessions = sorted((Session(subject_id=subject["subject_id"], session_id=x["session_id"], index=int(x["index"]),
+                                   role=x["role"], task=SIM_TASK, stage=x["stage"],
+                                   choices=np.asarray(x["choices"], dtype=np.int32),
+                                   rewards=np.asarray(x["rewards"], dtype=np.float64))
+                           for x in subject["sessions"]), key=lambda x: x.index)
+        out.append(evaluate.SubjectData(subject["subject_id"], [x for x in sessions if x.role == "fit"],
+                                        [x for x in sessions if x.role == "score"]))
+    return out
+
+
+def stream(seed: int, model: str, cohort: str, offset: int):
+    """The random stream of one model's simulated subjects. Gate 4's first half (generation, offset
+    0) keeps its original stream; any other cohort or offset gets its own."""
+    key = [seed, MODELS.index(model)]
+    if (cohort, offset) != ("generation", 0):
+        key.append(zlib.crc32(f"{cohort}:{offset}".encode()))
+    return np.random.default_rng(key)
 
 
 def check(prog, true: dict, records: list[dict]) -> dict:
@@ -140,13 +178,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", action="append", choices=MODELS, help="repeatable; default all three")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--cohort", default="generation", help="whose real subjects template the simulation")
+    parser.add_argument("--offset", type=int, default=0, help="first subject of the cohort to use")
+    parser.add_argument("--tag", help="file name suffix: simulated_<model>_<tag>.json.gz")
+    parser.add_argument("--simulate-only", action="store_true", help="save the subjects; do not fit them")
     args = parser.parse_args(argv)
     sha = _git_sha(Path(__file__).resolve().parents[2])
     studies_sha = _git_sha(args.studies.resolve())
     freeze = Freeze(args.freeze)
-    subjects = json.loads(args.cohorts.read_text())["cohorts"]["generation"][:N_SUBJECTS]
+    subjects = json.loads(args.cohorts.read_text())["cohorts"][args.cohort][args.offset:args.offset + N_SUBJECTS]
     if len(subjects) < N_SUBJECTS:
-        parser.error(f"the generation cohort has {len(subjects)} subjects; gate 4 needs {N_SUBJECTS} (#36)")
+        parser.error(f"the {args.cohort} cohort has {len(subjects)} subjects from {args.offset}; "
+                     f"gate 4 needs {N_SUBJECTS} (#36)")
     args.out.mkdir(parents=True, exist_ok=True)
     digest = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()     # noqa: E731
     result = {"mevolve_git_sha": sha, "studies_git_sha": studies_sha, "seed": args.seed, "max_em": MAX_EM,
@@ -160,7 +203,7 @@ def main(argv: list[str] | None = None) -> None:
         path = program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
         prog = program.load(path)
         true = truths(model, subjects, args.studies)
-        rng = np.random.default_rng([args.seed, MODELS.index(model)])
+        rng = stream(args.seed, model, args.cohort, args.offset)
         step, data, saved = _stepper(prog), [], []
         t0 = time.time()
         for s in subjects:
@@ -173,8 +216,18 @@ def main(argv: list[str] | None = None) -> None:
                                         "rewards": x.rewards.tolist()}
                                        for x, p in zip(fit_sessions + score_sessions, fit_p + score_p)]})
         t_sim = time.time() - t0
-        with gzip.open(args.out / f"simulated_{model}.json.gz", "wt") as f:
+        out = args.out / f"simulated_{model}{'_' + args.tag if args.tag else ''}.json.gz"
+        with gzip.open(out, "wt") as f:
             json.dump({"model": model, "params": list(prog.params), "seed": args.seed, "subjects": saved}, f)
+        if args.simulate_only:
+            manifest = {k: v for k, v in result.items() if k not in ("models", "criteria", "max_em")}
+            manifest.update({"model": model, "program_sha256": digest(path), "cohort": args.cohort,
+                             "offset": args.offset, "file": out.name, "file_sha256": digest(out),
+                             "simulate_seconds": t_sim})
+            out.with_name(out.name.replace(".json.gz", ".manifest.json")).write_text(json.dumps(manifest, indent=1) + "\n")
+            print(f"{model}: {len(saved)} simulated subjects from {args.cohort}[{args.offset}:] in {t_sim:.0f} s -> {out}",
+                  flush=True)
+            continue
         records = evaluate.evaluate(path, data, regime="2level", seed=args.seed, workers=args.workers,
                                     max_em=MAX_EM)
         c = check(prog, true, records)

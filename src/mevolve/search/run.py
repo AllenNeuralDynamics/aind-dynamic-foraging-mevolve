@@ -32,6 +32,8 @@ DEFAULTS = {
     "model": "claude-sonnet-5-5", "effort": "medium", "max_usd": 3.5, "max_tokens": 32000,
     "n_proposals": 10, "seeds": ["Miller-RHG", "Lopez-DoubleTrace", "Lebedeva-PR", "Eckstein-BI"],
     "seed_cache": None, "library_in_prompt": True,
+    "library_exclude": [],      # literature programs left out of the prompt (gate 4: the generating program)
+    "simulated": None,          # {"generation": path, "validation": path} of mevolve.gate4 subjects, not the freeze
     "max_evaluation_jobs": 3, "max_proposal_jobs": 3, "migration_interval": 10, "migration_rate": 0.1,
     "archive_size": 40, "eval_time": "02:00:00", "patch_types": None,
     "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: no resampling, so not up to 9 calls
@@ -52,6 +54,10 @@ def load_config(path: Path) -> dict:
     for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts"):
         if config[key]:
             config[key] = expand(key, config[key])
+    if config["simulated"]:
+        if set(config["simulated"]) != {"generation", "validation"}:
+            raise ValueError("simulated needs exactly generation and validation")
+        config["simulated"] = {k: expand(f"simulated.{k}", v) for k, v in config["simulated"].items()}
     for section in ("wandb", "launch"):
         if config[section]:
             config[section] = {k: expand(f"{section}.{k}", v) if isinstance(v, str) else v
@@ -59,8 +65,8 @@ def load_config(path: Path) -> dict:
     unknown = set(config) - set(DEFAULTS)
     if unknown:
         raise ValueError(f"unknown config keys: {sorted(unknown)}")
-    missing = [k for k in ("results_dir", "out_dir", "freeze", "cohorts", "generation", "validation")
-               if not config[k]]
+    data_keys = () if config["simulated"] else ("freeze", "cohorts", "generation", "validation")
+    missing = [k for k in ("results_dir", "out_dir") + data_keys if not config[k]]
     if missing:
         raise ValueError(f"config needs {missing}")
     if config["max_evaluation_jobs"] * config["workers"] > (os.cpu_count() or 1):
@@ -100,9 +106,12 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
     """A literature seed's evaluation, cached by code, data, cohorts, evaluator source and settings."""
     from .shinka_eval import evaluate_program
 
-    key = hashlib.sha256(json.dumps([code, Path(config["cohorts"]).read_text(), config["generation"],
-                                     config["validation"], config["max_em"], config["n_draws"],
-                                     (Path(config["freeze"]) / "manifest.json").read_text(),
+    if config["simulated"]:     # the subjects are the two files' exact bytes
+        data = [hashlib.sha256(Path(config["simulated"][k]).read_bytes()).hexdigest() for k in ("generation", "validation")]
+    else:
+        data = [Path(config["cohorts"]).read_text(), config["generation"], config["validation"],
+                (Path(config["freeze"]) / "manifest.json").read_text()]
+    key = hashlib.sha256(json.dumps([code, *data, config["max_em"], config["n_draws"],
                                      evaluator_digest()]).encode()).hexdigest()[:16]
     cache = Path(config["seed_cache"]) / f"{name}_{key}.json" if config["seed_cache"] else None
     if cache and cache.exists():
@@ -110,9 +119,11 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
     path = Path(config["results_dir"]) / "seeds" / f"{name}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(code)
-    metrics = evaluate_program(path, Path(config["freeze"]), Path(config["cohorts"]), config["generation"],
-                               config["validation"], config["max_evaluation_jobs"] * config["workers"],
-                               config["max_em"], config["n_draws"])
+    sim = config["simulated"]
+    metrics = evaluate_program(path, config["freeze"] and Path(config["freeze"]), config["cohorts"] and Path(config["cohorts"]),
+                               config["generation"], config["validation"],
+                               config["max_evaluation_jobs"] * config["workers"], config["max_em"], config["n_draws"],
+                               (Path(sim["generation"]), Path(sim["validation"])) if sim else None)
     if cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(metrics, default=float) + "\n")
@@ -149,8 +160,10 @@ def build_runner(config: dict, task_message: str):
     job = LocalJobConfig(
         eval_program_path=str(Path(shinka_eval.__file__).resolve()), python_executable=sys.executable,
         numeric_threads_per_job=1, time=config["eval_time"],
-        extra_cmd_args={"freeze": str(config["freeze"]), "cohorts": str(config["cohorts"]),
-                        "generation": config["generation"], "validation": config["validation"],
+        extra_cmd_args={**({"simulated_generation": config["simulated"]["generation"],
+                            "simulated_validation": config["simulated"]["validation"]} if config["simulated"] else
+                           {"freeze": str(config["freeze"]), "cohorts": str(config["cohorts"]),
+                            "generation": config["generation"], "validation": config["validation"]}),
                         "workers": config["workers"], "max_em": config["max_em"], "n_draws": config["n_draws"]})
     db = DatabaseConfig(num_islands=1 + len(config["seeds"]), archive_size=config["archive_size"],
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
@@ -236,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     from . import claude, prompt, seeds
 
     write_pricing_snapshot(results_dir)
-    task_message = prompt.task_message(config["library_in_prompt"])
+    task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]))
     placed = []
     for island, name in enumerate(config["seeds"], start=1):
         code = seeds.literature_source(name)

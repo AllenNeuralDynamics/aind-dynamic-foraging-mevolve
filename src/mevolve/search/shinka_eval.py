@@ -113,10 +113,13 @@ def check_shapes(prog) -> None:
         raise ProgramRejected(f"predict returns shape {logits.shape}, not (2,) logits over [left, right]")
 
 
-def evaluate_program(program_path: Path, freeze_dir: Path, cohorts_path: Path, generation: str,
-                     validation: str, workers: int, max_em: int = 20, n_draws: int = 2048) -> dict:
+def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: Path | None, generation: str | None,
+                     validation: str | None, workers: int, max_em: int = 20, n_draws: int = 2048,
+                     simulated: tuple[Path, Path] | None = None) -> dict:
     """Fit and score one program on the generation and validation subjects; returns Shinka's
-    metrics dict. Raises ``checks.ProgramRejected`` for a program that fails the static checks."""
+    metrics dict. Raises ``checks.ProgramRejected`` for a program that fails the static checks.
+    ``simulated`` (generation file, validation file) replaces the freeze and cohorts with subjects
+    saved by ``mevolve.gate4``."""
     from mevolve import evaluate, program
     from mevolve.data import Freeze
     from mevolve.search.checks import check_source
@@ -129,13 +132,19 @@ def evaluate_program(program_path: Path, freeze_dir: Path, cohorts_path: Path, g
         raise ProgramRejected(f"the loaded program has {len(prog.params)} parameters and {prog.n_latent} latent "
                               f"variables, not the {shape['n_params']} and {shape['n_latent']} its literals declare")
     check_shapes(prog)
-    cohorts = json.loads(Path(cohorts_path).read_text())["cohorts"]
-    freeze = Freeze(freeze_dir)
-    gen_ids, val_ids = cohorts[generation], cohorts[validation]
-    subjects = [evaluate.subject_data(freeze, s) for s in gen_ids + val_ids]
+    if simulated:
+        from mevolve.gate4 import load_simulated
+        gen_subjects, val_subjects = (load_simulated(p) for p in simulated)
+        generation, validation = (Path(p).name for p in simulated)
+    else:
+        cohorts = json.loads(Path(cohorts_path).read_text())["cohorts"]
+        freeze = Freeze(freeze_dir)
+        gen_subjects = [evaluate.subject_data(freeze, s) for s in cohorts[generation]]
+        val_subjects = [evaluate.subject_data(freeze, s) for s in cohorts[validation]]
+    subjects = gen_subjects + val_subjects
     records = evaluate.evaluate(program_path, subjects, regime="2level", workers=workers, max_em=max_em,
                                 n_draws=n_draws)
-    gen_records, val_records = records[:len(gen_ids)], records[len(gen_ids):]
+    gen_records, val_records = records[:len(gen_subjects)], records[len(gen_subjects):]
     val_score, gen_score = evaluate.program_score(val_records), evaluate.program_score(gen_records)
     seconds = [r["seconds"] for r in records]
     return {
@@ -145,7 +154,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path, cohorts_path: Path, g
                    "two_level_failed": bool(val_score["two_level_failed"]), **shape},
         "private": {"validation": val_score, "generation": gen_score, "seconds": time.time() - t0,
                     "subject_seconds_max": max(seconds), "max_em": max_em, "n_draws": n_draws,
-                    "cohorts": [generation, validation], "n_subjects": [len(gen_ids), len(val_ids)]},
+                    "cohorts": [generation, validation], "n_subjects": [len(gen_subjects), len(val_subjects)]},
         "text_feedback": feedback(val_score, gen_score, gen_records, prog.params),
     }
 
@@ -172,20 +181,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate one candidate program for Shinka")
     parser.add_argument("--program_path", type=Path, required=True)
     parser.add_argument("--results_dir", type=Path, required=True)
-    parser.add_argument("--freeze", type=Path, required=True)
-    parser.add_argument("--cohorts", type=Path, required=True)
-    parser.add_argument("--generation", required=True)
-    parser.add_argument("--validation", required=True)
+    parser.add_argument("--freeze", type=Path)
+    parser.add_argument("--cohorts", type=Path)
+    parser.add_argument("--generation")
+    parser.add_argument("--validation")
+    parser.add_argument("--simulated_generation", type=Path, help="mevolve.gate4 subjects, instead of the freeze")
+    parser.add_argument("--simulated_validation", type=Path)
     parser.add_argument("--workers", type=int, required=True)
     parser.add_argument("--max_em", type=int, default=20)
     parser.add_argument("--n_draws", type=int, default=2048)
     args = parser.parse_args(argv)
+    simulated = (args.simulated_generation, args.simulated_validation) if args.simulated_generation else None
+    if not simulated and not all((args.freeze, args.cohorts, args.generation, args.validation)):
+        parser.error("give --freeze, --cohorts, --generation and --validation, or the two --simulated_ files")
     from mevolve.search.checks import ProgramRejected
 
     metrics, error = None, None
     try:
         metrics = evaluate_program(args.program_path, args.freeze, args.cohorts, args.generation,
-                                   args.validation, args.workers, args.max_em, args.n_draws)
+                                   args.validation, args.workers, args.max_em, args.n_draws, simulated)
     except ProgramRejected as e:
         error = f"rejected by the static checks: {e}"
     except Exception as e:  # noqa: BLE001 - any failure of a candidate is a failed candidate

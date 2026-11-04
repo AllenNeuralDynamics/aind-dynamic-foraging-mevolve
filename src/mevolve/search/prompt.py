@@ -90,14 +90,17 @@ their mechanisms; do not copy one unchanged.
 """
 
 
-def library() -> str:
-    """Every literature program's source, in study 12's naming, alphabetically."""
+def library(exclude: tuple[str, ...] = ()) -> str:
+    """Every literature program's source, in study 12's naming, alphabetically, except ``exclude``."""
+    unknown = set(exclude) - set(LITERATURE)
+    if unknown:
+        raise ValueError(f"not literature models: {sorted(unknown)}")
     parts = [LIBRARY_HEADER]
-    for name in sorted(LITERATURE):
+    for name in sorted(set(LITERATURE) - set(exclude)):
         source = (LITERATURE_DIR / f"{LITERATURE[name][0]}.py").read_text().strip()
         parts.append(f"\n## {name}\n\n```python\n{source}\n```\n")
     return "".join(parts)
 
 
-def task_message(with_library: bool = True) -> str:
-    return TASK + (library() if with_library else "")
+def task_message(with_library: bool = True, exclude: tuple[str, ...] = ()) -> str:
+    return TASK + (library(tuple(exclude)) if with_library else "")
