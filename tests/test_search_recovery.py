@@ -275,6 +275,15 @@ def test_precheck_scores_an_unseen_literature_target_and_refuses_two_programs_wi
                        "--reference", str(tmp_path / "kernel.py")])
 
 
+@pytest.mark.parametrize("program", ["Sat", "Hattori2019", "template"])
+def test_precheck_stops_on_a_score_that_is_not_finite(program):
+    s = scores(Bari2019=70.0)
+    s["Sat"] = {"score": 74.0, "two_level_failed": False}
+    s[program]["score"] = float("nan")
+    out = precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019",))
+    assert not out["ok"] and any("no finite score" in r for r in out["stop"])
+
+
 def test_precheck_stops_when_the_new_mechanism_adds_too_little():
     s = scores(Bari2019=70.0)
     s["Sat"] = {"score": 73.1, "two_level_failed": False}      # the target: Hattori2019 plus a mechanism

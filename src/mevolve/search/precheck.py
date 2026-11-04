@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -42,6 +43,9 @@ def decide(scores: dict[str, dict], target: str, seeds: list[str], target_in_lib
     margins = {name: goal - s["score"] for name, s in scores.items()}      # unrounded: the rule uses these
     close = sorted(n for n, m in margins.items() if n not in (target, "template") and m < EXCLUDE_WITHIN)
     stop = []
+    missing = sorted(n for n, s in scores.items() if not math.isfinite(s["score"]))
+    if missing:                 # NaN compares False with everything, so no rule below would fire
+        stop.append(f"no finite score for {missing}")
     if scores[target]["two_level_failed"]:
         stop.append(f"{target}'s own 2-level fit failed, so the target is not a 2-level score")
     if margins["template"] < EXCLUDE_WITHIN:
