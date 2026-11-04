@@ -84,7 +84,8 @@ This repo holds the tool.
 | [`aind-dynamic-foraging-bfm-wrapper`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-wrapper) and [`-dispatcher`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-dispatcher) | used once, to build the same subject and session split as the GRU and the cognitive baselines |
 | [`aind-dynamic-foraging-bfm-studies`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies) | study 40: manifests, launch records, frozen results, reports |
 
-Runs log to W&B entity `NeuralDynamics`, project `aind-dynamic-foraging-model`.
+Runs log to W&B entity `NeuralDynamics`, project `dfbfm-mevolve`. Runs logged before 2026-11-03
+stay in `aind-dynamic-foraging-model` ([ADR 0003](docs/adr/0003-wandb-neuraldynamics-account.md)).
 
 ## License
 
