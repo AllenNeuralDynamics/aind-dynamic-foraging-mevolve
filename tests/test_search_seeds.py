@@ -113,3 +113,9 @@ def test_the_template_and_the_seeds_pass_the_shape_check(tmp_path):
         path = tmp_path / f"{name}.py"
         path.write_text(code)
         shinka_eval.check_shapes(program.load(path))
+
+
+def test_feedback_after_a_failed_2_level_fit_omits_its_details():
+    failed = {"score": 0.73, "two_level_failed": True}
+    text = shinka_eval.feedback({"score": 0.73, "two_level_failed": False}, failed, [], {"bias": (-5.0, 5.0)})
+    assert "omitted" in text and "by stage and task (score" not in text and "Fitted parameters" not in text

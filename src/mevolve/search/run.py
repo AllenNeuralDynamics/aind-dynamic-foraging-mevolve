@@ -249,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     seeds.install_island_patch()
     from shinka.database import DatabaseConfig
     seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed)
+    run_failed = True
     try:
         runner, _ = build_runner(config, task_message)
         if not args.dry:
@@ -258,13 +259,23 @@ def main(argv: list[str] | None = None) -> int:
         write_run_files(results_dir)          # proposals.csv and run_report.md
         print(json.dumps({k: summary[k] for k in ("calls", "cost_usd", "stop_reasons", "islands")}, default=str),
               flush=True)
+        run_failed = False
     finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
         if config["out_dir"]:
-            try:
-                shutil.copytree(results_dir, Path(config["out_dir"]), dirs_exist_ok=True)
-            except OSError as e:
-                print(f"copy to {config['out_dir']} failed: {e}", file=sys.stderr, flush=True)
+            keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
     return 0
+
+
+def keep_outputs(results_dir: Path, out_dir: Path, run_failed: bool) -> None:
+    """Copy the node-local results to ``out_dir``. A failed copy after a good run is the job's
+    failure (the database and ledger would be lost at cleanup), so it raises; after a failed run it
+    is only printed, so the run's own error is the one reported."""
+    try:
+        shutil.copytree(results_dir, out_dir, dirs_exist_ok=True)
+    except OSError as e:
+        print(f"copy to {out_dir} failed: {e}", file=sys.stderr, flush=True)
+        if not run_failed:
+            raise
 
 
 if __name__ == "__main__":

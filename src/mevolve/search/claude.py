@@ -112,11 +112,11 @@ async def query_anthropic_async(client, model, msg, system_msg, msg_history, out
         raise NonRetryableLLMError("structured output is not used by MEvolve")
     if model not in PRICES:
         raise NonRetryableLLMError(f"no price for {model}; add it to mevolve.search.claude.PRICES")
-    if spent(s.ledger) >= s.max_usd:
-        raise NonRetryableLLMError(f"the dollar cap (${s.max_usd:.2f}) is reached")
     messages = list(msg_history) + [{"role": "user", "content": [{"type": "text", "text": msg}]}]
     client = client.with_options(max_retries=0)     # retries happen below, where the ledger sees them
     for attempt in range(s.retries + 1):
+        if spent(s.ledger) >= s.max_usd:      # before every attempt: other proposals spend while this one waits
+            raise NonRetryableLLMError(f"the dollar cap (${s.max_usd:.2f}) is reached")
         t0 = time.time()
         try:
             async with client.messages.stream(model=model, max_tokens=s.max_tokens,

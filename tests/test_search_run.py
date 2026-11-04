@@ -44,3 +44,17 @@ def test_pricing_snapshot_makes_the_claude_models_known(tmp_path):
     assert snapshot is not None
     entry = snapshot.catalog.get_by_name("claude-sonnet-5-5")
     assert entry.input_price == pytest.approx(2e-6) and entry.output_price == pytest.approx(1e-5)
+
+
+def test_a_lost_copy_fails_a_good_run_but_not_a_failed_one(tmp_path, monkeypatch, capsys):
+    import shutil
+
+    from mevolve.search import run
+
+    def full(*a, **k):
+        raise OSError("No space left on device")
+    monkeypatch.setattr(shutil, "copytree", full)
+    with pytest.raises(OSError, match="No space"):
+        run.keep_outputs(tmp_path / "results", tmp_path / "out", run_failed=False)
+    run.keep_outputs(tmp_path / "results", tmp_path / "out", run_failed=True)     # the run's error wins
+    assert "copy to" in capsys.readouterr().err

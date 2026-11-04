@@ -69,6 +69,10 @@ def feedback(validation: dict, generation: dict, gen_records: list[dict], bounds
              f"Generation mice: score {100 * generation['score']:.3f}"
              + (" (2-level fit failed here too)" if generation["two_level_failed"] else ""), "",
              "Generation mice, by stage and task (score, scored trials):"]
+    if generation["two_level_failed"]:      # the details below would describe the rejected 2-level fit
+        lines[-1] = ("Details by stage and task, switch probabilities and fitted parameters are omitted: the "
+                     "2-level fit failed on the generation mice, and only the per-mouse fit's total score is kept.")
+        return "\n".join(lines)
     lines += [f"  {g:40s} {s:7.2f}  {n:>8,}" for g, (s, n) in _pooled(gen_records).items()]
     lines += ["", "Generation mice, mean |predicted - observed| switch probability (each mouse counts once):"]
     for key, label in STATS:

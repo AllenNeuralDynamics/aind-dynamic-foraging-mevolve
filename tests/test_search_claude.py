@@ -170,3 +170,16 @@ def test_a_retry_then_success_leaves_both_in_the_ledger(tmp_path, waits):
     entries = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()]
     assert [("error" in e) for e in entries] == [True, False]
     assert waits == [7.0] and result.content == "<NAME>x</NAME> code"
+
+
+def test_the_cap_is_rechecked_before_a_retry(tmp_path, monkeypatch):
+    s = settings(tmp_path, max_usd=0.01)
+
+    async def other_proposals_spend(seconds):      # while this call waits, others reach the cap
+        claude._record(s.ledger, {"time": 0, "cost": 0.02})
+    monkeypatch.setattr(claude, "_sleep", other_proposals_spend)
+    from shinka.llm.providers.errors import NonRetryableLLMError
+    client = FakeClient(rate_limit(), message())
+    with pytest.raises(NonRetryableLLMError, match="cap"):
+        run(client, s)
+    assert len(client.calls) == 1
