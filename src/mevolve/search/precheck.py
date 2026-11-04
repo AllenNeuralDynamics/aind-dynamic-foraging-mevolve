@@ -1,8 +1,9 @@
 """Gate 4's pre-check, before any Claude call: is the target out of reach of every program Claude sees?
 
 The second half of gate 4 asks whether a short search on subjects simulated from a known program
-(the target) reaches that program's score. Claude sees the seeds, the template and the literature
-library, and can copy any of them in one proposal. So every one is scored first on the same
+(the target) reaches that program's score. Claude sees the seeds (literature programs or program
+files), the template and, unless ``library_in_prompt`` is false, the literature library, and can copy
+any of them in one proposal. So every one is scored first on the same
 simulated subjects, with the search's settings, and the rule fixed before the search (study 40,
 variant ``gate4-recovery``) is applied:
 
@@ -11,9 +12,9 @@ variant ``gate4-recovery``) is applied:
 - any other library program within ``2 x TOLERANCE`` of the target is left out too;
 - stop and ask (Han) if the target's own 2-level fit fails, if the rule would leave out a seed or
   more than ``MAX_EXCLUDED`` programs, or if the template is already that close;
-- with ``--reference`` (the target without its new mechanism, e.g. Hattori2019 for Hattori2019 plus
-  satiety), also stop if the target beats it by less than ``2 x TOLERANCE``: a pass would not need
-  the mechanism.
+- with ``--reference`` (repeatable: the target without one of its mechanisms, e.g. Hattori2019 for
+  Hattori2019 plus satiety; a literature name or a program file, scored but not shown), also stop
+  if the target beats it by less than ``2 x TOLERANCE``: a pass would not need the mechanism.
 
 Scores are cached like the search's seeds (``seed_metrics``), so the search reuses them.
 
@@ -34,7 +35,7 @@ MAX_EXCLUDED = 3        # besides the target; more would narrow what the search 
 
 
 def decide(scores: dict[str, dict], target: str, seeds: list[str], target_in_library: bool = True,
-           reference: str | None = None) -> dict:
+           references: tuple[str, ...] = ()) -> dict:
     """The rule, from each program's ``{"score", "two_level_failed"}`` (x100). ``template`` is the
     near-empty program on island 0; every other key is a literature program, or the target."""
     goal = scores[target]["score"]
@@ -47,9 +48,10 @@ def decide(scores: dict[str, dict], target: str, seeds: list[str], target_in_lib
         stop.append(f"the template is within {EXCLUDE_WITHIN} of the target")
     if {target, *close} & set(seeds):        # a seed is on an island whatever the library holds
         stop.append(f"the rule would leave out seeds: {sorted({target, *close} & set(seeds))}")
-    if reference is not None and margins[reference] < EXCLUDE_WITHIN:
-        stop.append(f"the target beats {reference}, the same program without its mechanism, by "
-                    f"{margins[reference]:.3f}, less than {EXCLUDE_WITHIN}")
+    for ref in references:
+        if margins[ref] < EXCLUDE_WITHIN:
+            stop.append(f"the target beats {ref}, the same program without its mechanism, by "
+                        f"{margins[ref]:.3f}, less than {EXCLUDE_WITHIN}")
     if len(close) > MAX_EXCLUDED:
         stop.append(f"the rule would leave out {len(close)} programs besides {target}")
     return {"target": target, "target_score": goal, "tolerance": TOLERANCE, "exclude_within": EXCLUDE_WITHIN,
@@ -69,8 +71,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True, help="the search's run config")
     parser.add_argument("--target", required=True, help="a literature program's name, or a program file")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--reference", choices=sorted(LITERATURE),
-                        help="the target without its new mechanism: the target must beat it by 2 x TOLERANCE")
+    parser.add_argument("--reference", action="append", default=[],
+                        help="repeatable: the target without one of its mechanisms (a literature program's name or a "
+                             "program file, scored but not shown); the target must beat it by 2 x TOLERANCE")
     args = parser.parse_args(argv)
     config = load_config(args.config)
     if not config["simulated"]:
@@ -83,7 +86,12 @@ def main(argv: list[str] | None = None) -> int:
     target = args.target if in_library else Path(args.target).stem
     if not in_library and (target in LITERATURE or target == "template"):
         parser.error(f"the target file's name {target} is taken (a literature program or the template)")
-    programs = [("template", seeds.TEMPLATE)] + [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]
+    # everything Claude is shown: the template, the seeds, and the library when it is in the prompt
+    shown = [("template", seeds.TEMPLATE)] + [seeds.seed_name_and_source(s) for s in config["seeds"]]
+    if config["library_in_prompt"]:
+        shown += [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]
+    references = [seeds.seed_name_and_source(r) for r in args.reference]
+    programs = list({name: code for name, code in shown + references}.items())    # each program once
     if not in_library:
         programs.append((target, seeds.wrap(Path(args.target).read_text())))
     rows = {}
@@ -94,7 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{name:32s} {m['combined_score']:8.3f}{'  (2-level failed)' if rows[name]['two_level_failed'] else ''}",
               flush=True)
     result = decide({k: {"score": v["score"], "two_level_failed": v["two_level_failed"]} for k, v in rows.items()},
-                    target, config["seeds"], in_library, args.reference)
+                    target, [seeds.seed_name_and_source(s)[0] for s in config["seeds"]], in_library,
+                    tuple(name for name, _ in references))
     result.update({"mevolve_git_sha": _git_sha(Path(__file__).resolve().parents[3]), "config": str(args.config),
                    "target_source": args.target,
                    "simulated": config["simulated"], "max_em": config["max_em"], "n_draws": config["n_draws"],

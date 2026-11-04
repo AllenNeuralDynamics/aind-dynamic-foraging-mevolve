@@ -201,10 +201,61 @@ def test_precheck_refuses_a_target_file_named_like_the_template_or_a_library_pro
             precheck.main(["--config", str(cfg), "--target", str(target), "--out", str(tmp_path / "p.json")])
 
 
+def test_a_seed_can_be_a_program_file(tmp_path, monkeypatch):
+    from mevolve.search import seeds
+    from mevolve.search.run import load_config
+
+    path = tmp_path / "one_timescale.py"
+    path.write_text(seeds.TEMPLATE)
+    assert seeds.seed_name_and_source(str(path)) == ("one_timescale", seeds.wrap(seeds.TEMPLATE))
+    assert seeds.seed_name_and_source("Bari2019") == ("Bari2019", seeds.literature_source("Bari2019"))
+    (tmp_path / "Bari2019.py").write_text(seeds.TEMPLATE)
+    with pytest.raises(ValueError, match="is taken"):
+        seeds.seed_name_and_source(str(tmp_path / "Bari2019.py"))
+    monkeypatch.setenv("SEEDS_DIR", str(tmp_path))
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"results_dir": "r", "out_dir": "o", "simulated": {"generation": "g", "validation": "v"},
+                               "workers": 1, "max_evaluation_jobs": 1, "seeds": ["$SEEDS_DIR/one_timescale.py", "Bari2019"]}))
+    assert load_config(cfg)["seeds"] == [str(path), "Bari2019"]
+
+
+@pytest.mark.parametrize("library", [False, True])
+def test_precheck_scores_what_claude_is_shown(tmp_path, monkeypatch, library):
+    from mevolve.literature import LITERATURE
+    from mevolve.search import run, seeds
+
+    for name in ("one_timescale", "two_timescale_ck"):
+        (tmp_path / f"{name}.py").write_text(seeds.TEMPLATE)
+    scored = []
+    def fake(name, code, config):
+        scored.append(name)
+        return {"combined_score": 75.0 if name == "two_timescale_ck" else 70.0,
+                "public": {"two_level_failed": False, "generation_score": 0.0}, "private": {"seconds": 0.0}}
+    monkeypatch.setattr(run, "seed_metrics", fake)
+    monkeypatch.setattr("mevolve.freeze._git_sha", lambda repo: "0" * 40)      # the worktree may be dirty
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"results_dir": "r", "out_dir": "o", "simulated": {"generation": "g", "validation": "v"},
+                               "workers": 1, "max_evaluation_jobs": 1, "library_in_prompt": library,
+                               "seeds": [str(tmp_path / "one_timescale.py"), "Miller-RHG"]}))
+    out = tmp_path / "p.json"
+    assert precheck.main(["--config", str(cfg), "--target", str(tmp_path / "two_timescale_ck.py"), "--out", str(out)]) == 0
+    shown = {"template", "one_timescale", "Miller-RHG"} | (set(LITERATURE) if library else set())
+    assert sorted(scored) == sorted(shown | {"two_timescale_ck"})        # Miller-RHG once
+    assert json.loads(out.read_text())["ok"]
+    if not library:     # references are scored, though not shown
+        (tmp_path / "one_timescale_ck.py").write_text(seeds.TEMPLATE)
+        scored.clear()
+        precheck.main(["--config", str(cfg), "--target", str(tmp_path / "two_timescale_ck.py"), "--out", str(out),
+                       "--reference", "Bari2019", "--reference", str(tmp_path / "one_timescale_ck.py")])
+        assert {"Bari2019", "one_timescale_ck"} <= set(scored)
+
+
 def test_precheck_stops_when_the_new_mechanism_adds_too_little():
     s = scores(Bari2019=70.0)
     s["Sat"] = {"score": 73.1, "two_level_failed": False}      # the target: Hattori2019 plus a mechanism
-    out = precheck.decide(s, "Sat", SEEDS, target_in_library=False, reference="Hattori2019")
+    out = precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019",))
     assert not out["ok"] and any("without its mechanism" in r for r in out["stop"])
     s["Sat"]["score"] = 73.5
-    assert precheck.decide(s, "Sat", SEEDS, target_in_library=False, reference="Hattori2019")["ok"]
+    assert precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019",))["ok"]
+    s["NoSlow"] = {"score": 73.3, "two_level_failed": False}       # every reference must be 0.4 below
+    assert not precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019", "NoSlow"))["ok"]
