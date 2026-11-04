@@ -92,3 +92,24 @@ def test_a_parameter_added_after_the_literals_is_refused(tmp_path):
                       "--workers", "1"])
     error = json.loads((tmp_path / "r" / "correct.json").read_text())["error"]
     assert "3 parameters" in error and "the 2" in error
+
+
+def test_a_program_with_more_latents_than_declared_is_refused(tmp_path):
+    hidden = seeds.TEMPLATE.replace("jnp.zeros(1)", "jnp.zeros(7)")
+    assert hidden != seeds.TEMPLATE
+    path = tmp_path / "main.py"
+    path.write_text(hidden)
+    shinka_eval.main(["--program_path", str(path), "--results_dir", str(tmp_path / "r"), "--freeze", str(tmp_path),
+                      "--cohorts", str(tmp_path / "c.json"), "--generation", "g", "--validation", "v",
+                      "--workers", "1"])
+    error = json.loads((tmp_path / "r" / "correct.json").read_text())["error"]
+    assert "init_latents returns shape (7,)" in error and "N_LATENT is 1" in error
+
+
+def test_the_template_and_the_seeds_pass_the_shape_check(tmp_path):
+    from mevolve import program
+    for name, code in [("template", seeds.TEMPLATE)] + [(n, seeds.literature_source(n)) for n in
+                                                       ("Miller-RHG", "Lopez-DoubleTrace", "Lebedeva-PR", "Eckstein-BI")]:
+        path = tmp_path / f"{name}.py"
+        path.write_text(code)
+        shinka_eval.check_shapes(program.load(path))

@@ -43,9 +43,18 @@ class FakeStream:
 
 
 class FakeClient:
-    def __init__(self, result):
-        self.calls = []
-        self.messages = SimpleNamespace(stream=lambda **kw: FakeStream(result, self.calls, kw))
+    """Returns ``results`` in turn, one per request (the last one repeats)."""
+
+    def __init__(self, *results):
+        self.calls, self.options, self.results = [], [], list(results)
+        self.messages = SimpleNamespace(stream=lambda **kw: FakeStream(self._next(), self.calls, kw))
+
+    def _next(self):
+        return self.results.pop(0) if len(self.results) > 1 else self.results[0]
+
+    def with_options(self, **kw):
+        self.options.append(kw)
+        return self
 
 
 def run(client, settings, system="TASK\nformat", **kw):
@@ -128,10 +137,36 @@ def test_system_without_the_prefix_is_sent_whole():
     assert claude.system_blocks("other", "TASK") == [{"type": "text", "text": "other"}]
 
 
-def test_retryable_errors_are_recorded_and_re_raised(tmp_path):
+def rate_limit(retry_after=None):
     request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    error = anthropic.RateLimitError("slow down", response=httpx.Response(429, request=request), body=None)
+    headers = {"retry-after": retry_after} if retry_after else {}
+    return anthropic.RateLimitError("slow down", response=httpx.Response(429, request=request, headers=headers),
+                                    body=None)
+
+
+@pytest.fixture
+def waits(monkeypatch):
+    seconds = []
+
+    async def sleep(s):
+        seconds.append(s)
+    monkeypatch.setattr(claude, "_sleep", sleep)
+    return seconds
+
+
+def test_retryable_errors_are_recorded_and_re_raised(tmp_path, waits):
     with pytest.raises(anthropic.RateLimitError):
-        run(FakeClient(error), settings(tmp_path))
-    entry = json.loads((tmp_path / "ledger.jsonl").read_text())
-    assert entry["retryable"] is True and "RateLimitError" in entry["error"]
+        run(FakeClient(rate_limit()), settings(tmp_path, retries=2))
+    entries = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()]
+    assert [e["attempt"] for e in entries] == [1, 2, 3]
+    assert all(e["retryable"] and "RateLimitError" in e["error"] for e in entries)
+    assert waits == [2.0, 4.0]
+
+
+def test_a_retry_then_success_leaves_both_in_the_ledger(tmp_path, waits):
+    client = FakeClient(rate_limit(retry_after="7"), message())
+    result = run(client, settings(tmp_path))
+    assert client.options == [{"max_retries": 0}]       # the SDK's own retries would hide the 429
+    entries = [json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text().splitlines()]
+    assert [("error" in e) for e in entries] == [True, False]
+    assert waits == [7.0] and result.content == "<NAME>x</NAME> code"

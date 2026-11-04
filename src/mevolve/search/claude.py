@@ -10,11 +10,14 @@ call with ``query_anthropic_async`` here, which:
 - caches the system prompt up to the end of the task message (``cache_prefix``);
 - turns a refusal or a reply cut at ``max_tokens`` into an empty reply, which Shinka counts as a
   failed proposal, and a 400 into an error Shinka does not retry;
+- retries rate limits, timeouts and server errors itself, with backoff, after turning off the SDK's
+  hidden retries, so every failed attempt reaches the ledger;
 - appends every call to a JSONL ledger with all four token counts and its cost, and refuses new
   calls once the ledger reaches ``max_usd``. The ledger, not Shinka's tally, is the run's cost.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -39,6 +42,7 @@ class Settings:
     max_usd: float = 7.0
     max_tokens: int = 32000
     cache_prefix: str = ""      # system text up to its end gets a cache breakpoint
+    retries: int = 4            # extra attempts after a rate limit, timeout or server error
 
     def __post_init__(self):
         if self.effort not in EFFORTS:
@@ -48,6 +52,17 @@ class Settings:
 
 
 _settings: Settings | None = None
+_sleep = asyncio.sleep          # replaced in tests
+
+
+def backoff(error: anthropic.APIError, attempt: int) -> float:
+    """Seconds to wait before retrying: the server's ``retry-after`` when it sends one, else 2, 4,
+    8, ... capped at 60."""
+    response = getattr(error, "response", None)
+    try:
+        return min(60.0, float(response.headers["retry-after"]))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return min(60.0, 2.0 ** (attempt + 1))
 
 
 def cost(model: str, usage) -> float:
@@ -100,21 +115,26 @@ async def query_anthropic_async(client, model, msg, system_msg, msg_history, out
     if spent(s.ledger) >= s.max_usd:
         raise NonRetryableLLMError(f"the dollar cap (${s.max_usd:.2f}) is reached")
     messages = list(msg_history) + [{"role": "user", "content": [{"type": "text", "text": msg}]}]
-    t0 = time.time()
-    try:
-        async with client.messages.stream(model=model, max_tokens=s.max_tokens,
-                                          system=system_blocks(system_msg, s.cache_prefix),
-                                          messages=messages,
-                                          output_config={"effort": s.effort}) as stream:
-            response = await stream.get_final_message()
-    except NOT_RETRYABLE as e:
-        _record(s.ledger, {"time": t0, "model": model, "effort": s.effort, "error": f"{type(e).__name__}: {e}",
-                           "retryable": False, "cost": 0.0})
-        raise NonRetryableLLMError(f"{type(e).__name__}: {e}") from e
-    except anthropic.APIError as e:     # rate limits, timeouts, 5xx: Shinka may retry; the ledger keeps each
-        _record(s.ledger, {"time": t0, "model": model, "effort": s.effort, "error": f"{type(e).__name__}: {e}",
-                           "retryable": True, "cost": 0.0})
-        raise
+    client = client.with_options(max_retries=0)     # retries happen below, where the ledger sees them
+    for attempt in range(s.retries + 1):
+        t0 = time.time()
+        try:
+            async with client.messages.stream(model=model, max_tokens=s.max_tokens,
+                                              system=system_blocks(system_msg, s.cache_prefix),
+                                              messages=messages,
+                                              output_config={"effort": s.effort}) as stream:
+                response = await stream.get_final_message()
+            break
+        except NOT_RETRYABLE as e:
+            _record(s.ledger, {"time": t0, "model": model, "effort": s.effort, "error": f"{type(e).__name__}: {e}",
+                               "retryable": False, "cost": 0.0})
+            raise NonRetryableLLMError(f"{type(e).__name__}: {e}") from e
+        except anthropic.APIError as e:     # rate limits, timeouts, 5xx: retried here, each one in the ledger
+            _record(s.ledger, {"time": t0, "model": model, "effort": s.effort, "error": f"{type(e).__name__}: {e}",
+                               "retryable": True, "attempt": attempt + 1, "cost": 0.0})
+            if attempt == s.retries:
+                raise
+            await _sleep(backoff(e, attempt))
     usage = response.usage
     dollars = cost(model, usage)
     content, thought = split_content_blocks(response)

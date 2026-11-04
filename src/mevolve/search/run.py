@@ -197,8 +197,8 @@ def install_fake_llm(ledger: Path) -> None:
         return f"({lo - pad if lo != 0 else lo:.4g}, {hi + pad:.4g})"
 
     async def fake(client, model, msg, system_msg, msg_history, output_model, model_posteriors=None, **kwargs):
-        blocks = re.findall(r"```python\n(.*?)```", msg, re.S)
-        code = re.sub(r"\((-?[0-9.]+), (-?[0-9.]+)\)", widen, blocks[0]) if blocks else ""
+        blocks = re.findall(r"```python\n(.*?)```", msg, re.S)    # inspirations first, the parent last
+        code = re.sub(r"\((-?[0-9.]+), (-?[0-9.]+)\)", widen, blocks[-1]) if blocks else ""
         content = f"<NAME>widened_bounds</NAME>\n<DESCRIPTION>Fake: bounds widened.</DESCRIPTION>\n<CODE>\n```python\n{code}```\n</CODE>"
         _record(ledger, {"time": time.time(), "model": "fake", "stop_reason": "end_turn", "cost": 0.0})
         return QueryResult(content=content, msg=msg, system_msg=system_msg,
@@ -216,8 +216,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="a $0 rehearsal: canned full rewrites instead of Claude (use patch_types [\"full\"])")
     args = parser.parse_args(argv)
     config = load_config(args.config)
-    if args.fake_llm:
-        os.environ.setdefault("ANTHROPIC_API_KEY", "fake")     # Shinka checks the variable exists
+    if args.fake_llm or args.dry:       # neither calls Claude, but Shinka's runner checks the variable exists
+        os.environ.setdefault("ANTHROPIC_API_KEY", "fake")
     if not args.dry and not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY is not set (export it from ~/.config/mevolve/ in the job)")
     for env in (Path.cwd() / ".env",):

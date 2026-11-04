@@ -80,6 +80,35 @@ def feedback(validation: dict, generation: dict, gen_records: list[dict], bounds
     return "\n".join(lines)
 
 
+def check_shapes(prog) -> None:
+    """Trace one step of ``prog`` (no data, no compute) and refuse it unless ``init_latents`` and
+    ``update`` return ``N_LATENT`` values and ``predict`` returns 2: the latent limit then holds for
+    what is fitted, not only for what is declared."""
+    import jax
+    import jax.numpy as jnp
+
+    from mevolve.program import SESSION_FACTS
+    from mevolve.search.checks import ProgramRejected
+
+    p = {k: jnp.float64((lo + hi) / 2) for k, (lo, hi) in prog.params.items()}
+    session = {k: jnp.float64(0.0) for k in SESSION_FACTS}
+
+    def step():
+        latents = jnp.asarray(prog.init_latents(p, session), dtype=jnp.float64)
+        return (latents, jnp.asarray(prog.predict(latents, p)),
+                jnp.asarray(prog.update(latents, jnp.int32(1), jnp.float64(1.0), p)))
+    try:
+        init, logits, updated = jax.eval_shape(step)
+    except Exception as e:
+        raise ProgramRejected(f"one step of the program fails: {type(e).__name__}: {e}") from e
+    want = (prog.n_latent,)
+    for what, got in (("init_latents", init.shape), ("update", updated.shape)):
+        if got != want:
+            raise ProgramRejected(f"{what} returns shape {got}, but N_LATENT is {prog.n_latent}")
+    if logits.shape != (2,):
+        raise ProgramRejected(f"predict returns shape {logits.shape}, not (2,) logits over [left, right]")
+
+
 def evaluate_program(program_path: Path, freeze_dir: Path, cohorts_path: Path, generation: str,
                      validation: str, workers: int, max_em: int = 20, n_draws: int = 2048) -> dict:
     """Fit and score one program on the generation and validation subjects; returns Shinka's
@@ -95,6 +124,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path, cohorts_path: Path, g
         from mevolve.search.checks import ProgramRejected
         raise ProgramRejected(f"the loaded program has {len(prog.params)} parameters and {prog.n_latent} latent "
                               f"variables, not the {shape['n_params']} and {shape['n_latent']} its literals declare")
+    check_shapes(prog)
     cohorts = json.loads(Path(cohorts_path).read_text())["cohorts"]
     freeze = Freeze(freeze_dir)
     gen_ids, val_ids = cohorts[generation], cohorts[validation]
