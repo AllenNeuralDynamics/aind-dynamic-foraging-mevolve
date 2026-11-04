@@ -26,7 +26,7 @@ def _alive(pid):
     try:
         with open(f"/proc/{pid}/stat") as f:      # a zombie is gone in every way that matters
             return f.read().split()[2] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):      # gone before the open, or during the read
         return False
 
 
