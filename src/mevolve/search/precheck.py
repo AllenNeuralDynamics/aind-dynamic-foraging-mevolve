@@ -32,7 +32,7 @@ def decide(scores: dict[str, dict], target: str, seeds: list[str]) -> dict:
     """The rule, from each program's ``{"score", "two_level_failed"}`` (x100). ``template`` is the
     near-empty program on island 0; every other key is a literature program."""
     goal = scores[target]["score"]
-    margins = {name: round(goal - s["score"], 4) for name, s in scores.items()}
+    margins = {name: goal - s["score"] for name, s in scores.items()}      # unrounded: the rule uses these
     close = sorted(n for n, m in margins.items() if n not in (target, "template") and m < EXCLUDE_WITHIN)
     stop = []
     if scores[target]["two_level_failed"]:
@@ -44,7 +44,7 @@ def decide(scores: dict[str, dict], target: str, seeds: list[str]) -> dict:
     if len(close) > MAX_EXCLUDED:
         stop.append(f"the rule would leave out {len(close)} programs besides {target}")
     return {"target": target, "target_score": goal, "tolerance": TOLERANCE, "exclude_within": EXCLUDE_WITHIN,
-            "margins": dict(sorted(margins.items(), key=lambda kv: kv[1])),
+            "margins": {n: round(m, 4) for n, m in sorted(margins.items(), key=lambda kv: kv[1])},
             "library_exclude": sorted({target, *close}), "stop": stop, "ok": not stop}
 
 

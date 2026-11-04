@@ -136,3 +136,8 @@ def test_the_eval_script_needs_the_freeze_or_both_simulated_files(tmp_path, extr
 def test_precheck_stops_when_the_target_is_a_seed():
     out = precheck.decide(scores(), "Hattori2019", SEEDS + ["Hattori2019"])
     assert not out["ok"] and any("seeds" in r and "Hattori2019" in r for r in out["stop"])
+
+
+def test_precheck_compares_unrounded_margins():
+    out = precheck.decide(scores(Bari2019=72.60004), "Hattori2019", SEEDS)     # 0.39996 below: within 0.4
+    assert "Bari2019" in out["library_exclude"]
