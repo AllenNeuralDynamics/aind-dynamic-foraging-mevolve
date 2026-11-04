@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-WANDB_ENTITY, WANDB_PROJECT = "NeuralDynamics", "aind-dynamic-foraging-model"     # MEvolve ADR 0003
+WANDB_ENTITY, WANDB_PROJECT = "NeuralDynamics", "dfbfm-mevolve"     # MEvolve ADR 0003, amended 2026-11-03
 
 DEFAULTS = {
     "results_dir": None, "out_dir": None, "freeze": None, "cohorts": None,
