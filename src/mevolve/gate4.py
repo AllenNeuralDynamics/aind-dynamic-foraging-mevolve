@@ -109,10 +109,17 @@ def simulate(prog, mu, log_sigma, real: list, rng, step) -> list:
     return sessions, params
 
 
-def truths_from_fit(prog, path: Path | str, subjects: list[str]) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+def truths_from_fit(prog, path: Path | str, subjects: list[str],
+                    program_path: Path | str | None = None) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Each subject's generating typical values and log spreads on the probit scale, from a
-    ``--fit-truths`` file of the same program."""
-    fits = json.loads(Path(path).read_text())["subjects"]
+    ``--fit-truths`` file of the same program: refused if ``program_path``'s bytes differ from the
+    program that was fitted (log spreads are positional, in ``PARAMS`` order)."""
+    saved = json.loads(Path(path).read_text())
+    if program_path is not None:
+        digest = hashlib.sha256(Path(program_path).read_bytes()).hexdigest()
+        if saved.get("program_sha256") != digest:
+            raise ValueError(f"{path} was fitted to a different program than {program_path}")
+    fits = saved["subjects"]
     missing = [s for s in subjects if s not in fits]
     if missing:
         raise ValueError(f"{path} has no fit for {missing}")
@@ -207,6 +214,8 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("give --model or --program-path, not both")
     if args.program_path and not (args.fit_truths or args.truths):
         parser.error("--program-path needs --fit-truths or --truths")
+    if (args.fit_truths or args.truths) and not args.program_path:
+        parser.error("--fit-truths and --truths need --program-path")
     sha = _git_sha(Path(__file__).resolve().parents[2])
     studies_sha = _git_sha(args.studies.resolve())
     freeze = Freeze(args.freeze)
@@ -242,7 +251,8 @@ def main(argv: list[str] | None = None) -> None:
     for model in [args.program_path.stem] if args.program_path else args.model or MODELS:
         path = args.program_path or program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
         prog = program.load(path)
-        true = truths_from_fit(prog, args.truths, subjects) if args.program_path else truths(model, subjects, args.studies)
+        true = (truths_from_fit(prog, args.truths, subjects, args.program_path) if args.program_path
+                else truths(model, subjects, args.studies))
         rng = stream(args.seed, model, args.cohort, args.offset)
         step, data, saved = _stepper(prog), [], []
         t0 = time.time()

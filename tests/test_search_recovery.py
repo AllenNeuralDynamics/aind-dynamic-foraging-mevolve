@@ -167,14 +167,35 @@ def test_truths_come_from_the_programs_own_fit(tmp_path):
     fit.write_text(json.dumps({"subjects": {"m1": {"typical_params": {"side_bias": 0.0, "stickiness": 1.0},
                                                    "log_sigma": [-1.0, -2.0], "converged": True}}}))
     true = gate4.truths_from_fit(prog, fit, ["m1"])
+    import hashlib
+    saved = json.loads(fit.read_text())
+    saved["program_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    fit.write_text(json.dumps(saved))
+    gate4.truths_from_fit(prog, fit, ["m1"], path)                  # the same program: accepted
+    path.write_text(seeds.TEMPLATE.replace("side_bias", "bias_side"))
+    with pytest.raises(ValueError, match="different program"):
+        gate4.truths_from_fit(prog, fit, ["m1"], path)
     assert true["m1"][1].tolist() == [-1.0, -2.0] and true["m1"][0].shape == (2,)
     with pytest.raises(ValueError, match="no fit"):
         gate4.truths_from_fit(prog, fit, ["m1", "m2"])
 
 
 @pytest.mark.parametrize("extra", [["--program-path", "g.py"], ["--program-path", "g.py", "--model", "Hattori2019",
-                                                                 "--truths", "t.json"]])
+                                                                 "--truths", "t.json"],
+                                   ["--truths", "t.json", "--simulate-only"], ["--fit-truths"]])
 def test_gate4_refuses_a_program_path_without_truths_or_with_a_model(tmp_path, extra):
     with pytest.raises(SystemExit):
         gate4.main(["--freeze", str(tmp_path), "--cohorts", str(tmp_path / "c.json"), "--studies", str(tmp_path),
                     "--out", str(tmp_path / "o"), *extra])
+
+
+def test_precheck_refuses_a_target_file_named_like_the_template_or_a_library_program(tmp_path, monkeypatch):
+    for name in ("template", "Bari2019"):
+        target = tmp_path / f"{name}.py"
+        target.write_text("x = 1\n")
+        cfg = tmp_path / "run.json"
+        cfg.write_text(json.dumps({"results_dir": str(tmp_path / "r"), "out_dir": str(tmp_path / "o"),
+                                   "simulated": {"generation": "g", "validation": "v"},
+                                   "workers": 1, "max_evaluation_jobs": 1}))
+        with pytest.raises(SystemExit):
+            precheck.main(["--config", str(cfg), "--target", str(target), "--out", str(tmp_path / "p.json")])

@@ -72,8 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     if not in_library and not Path(args.target).is_file():
         parser.error(f"--target {args.target} is neither a literature program nor a file")
     target = args.target if in_library else Path(args.target).stem
-    if not in_library and target in LITERATURE:
-        parser.error(f"the target file's name {target} is a literature program's")
+    if not in_library and (target in LITERATURE or target == "template"):
+        parser.error(f"the target file's name {target} is taken (a literature program or the template)")
     programs = [("template", seeds.TEMPLATE)] + [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]
     if not in_library:
         programs.append((target, seeds.wrap(Path(args.target).read_text())))
