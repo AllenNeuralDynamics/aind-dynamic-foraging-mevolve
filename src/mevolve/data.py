@@ -14,6 +14,14 @@ import numpy as np
 import pandas as pd
 
 FINAL_STAGES = ("STAGE_FINAL", "GRADUATED")
+NO_STAGE = ("None", "")      # how the freeze's sessions.parquet spells a missing stage, besides NaN
+
+
+def stage_or_none(value) -> str | None:
+    """A recorded stage, or None when there is none (NaN, None, or the strings in ``NO_STAGE``)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)) or str(value) in NO_STAGE:
+        return None
+    return str(value)
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,6 @@ class Freeze:
         for row in rows.itertuples(index=False):
             choices, rewards = self._trials[row.session_id]
             out.append(Session(subject_id=subject_id, session_id=row.session_id, index=int(row.index),
-                               role=row.role, task=row.task, stage=None if pd.isna(row.stage) else row.stage,
+                               role=row.role, task=row.task, stage=stage_or_none(row.stage),
                                choices=choices, rewards=rewards))
         return out

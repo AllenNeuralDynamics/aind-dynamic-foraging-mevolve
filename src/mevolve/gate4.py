@@ -108,14 +108,14 @@ def simulate(prog, mu, log_sigma, real: list, rng, step) -> list:
 def load_simulated(path: Path | str) -> list:
     """Subjects saved by ``main``, as ``evaluate.SubjectData`` with their fit and score sessions in
     date order (the files keep no task: every simulated session is ``SIM_TASK``)."""
-    from .data import Session
+    from .data import Session, stage_or_none
 
     with gzip.open(path, "rt") as f:
         saved = json.load(f)
     out = []
     for subject in saved["subjects"]:
         sessions = sorted((Session(subject_id=subject["subject_id"], session_id=x["session_id"], index=int(x["index"]),
-                                   role=x["role"], task=SIM_TASK, stage=x["stage"],
+                                   role=x["role"], task=SIM_TASK, stage=stage_or_none(x["stage"]),
                                    choices=np.asarray(x["choices"], dtype=np.int32),
                                    rewards=np.asarray(x["rewards"], dtype=np.float64))
                            for x in subject["sessions"]), key=lambda x: x.index)
