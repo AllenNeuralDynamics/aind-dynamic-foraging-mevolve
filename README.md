@@ -50,6 +50,7 @@ python -m mevolve.gate1a --freeze <freeze> --out gate1a.json --workers 64       
 python -m mevolve.gate1 --regime subject --model Hattori2019 --freeze <freeze> --studies <studies> --out <dir>
 python -m mevolve.gate1 --regime 2level --model CompareToThreshold --model Hattori2019 ...       # vs study 13
 python -m mevolve.gate2 --freeze <freeze> --cohorts cohorts.json --model Hattori2019 --model CompareToThreshold --out gate2.json
+python -m mevolve.gate4 --freeze <freeze> --cohorts cohorts.json --studies <studies> --out <dir> --workers 56   # recovery
 ```
 
 Reported 2-level scores of the literature models (study 12's regime 2) run Laplace-EM to
@@ -84,7 +85,8 @@ This repo holds the tool.
 | [`aind-dynamic-foraging-bfm-wrapper`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-wrapper) and [`-dispatcher`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-dispatcher) | used once, to build the same subject and session split as the GRU and the cognitive baselines |
 | [`aind-dynamic-foraging-bfm-studies`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies) | study 40: manifests, launch records, frozen results, reports |
 
-Runs log to W&B entity `NeuralDynamics`, project `aind-dynamic-foraging-model`.
+Runs log to W&B entity `NeuralDynamics`, project `dfbfm-mevolve`. Runs logged before 2026-11-03
+stay in `aind-dynamic-foraging-model` ([ADR 0003](docs/adr/0003-wandb-neuraldynamics-account.md)).
 
 ## License
 
