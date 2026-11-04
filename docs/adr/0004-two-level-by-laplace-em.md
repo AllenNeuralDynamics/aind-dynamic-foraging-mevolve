@@ -31,8 +31,10 @@ average over few draws is biased low. Hence 2,048 draws, with the weight ESS rep
 
 **Iterations.** EM converges linearly, but the held-out score settles long before the spreads of
 poorly identified parameters do. The search caps EM at 20 iterations so that one evaluation of
-the generation and validation subjects (96) stays under about 3 minutes on a 112-core node (gate
-2: 103 to 145 s for the literature models tried). On the 149 test subjects the cap costs little:
+the generation and validation subjects (96) takes about 3 minutes on a 112-core node (gate 2,
+literature models tried: 103 to 145 s with the first fitter; 179 to 204 s once bound-face starts and
+4 differential-evolution restarts were added, MEvolve #16 and #18; corrected 2026-11-04). On the
+149 test subjects the cap costs little:
 
 | 2-level EM, 149 test subjects | 100 iterations | 20 iterations | 2-level HB (study 13) |
 |---|---|---|---|
