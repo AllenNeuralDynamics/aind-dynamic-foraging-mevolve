@@ -38,7 +38,8 @@ MAX_EM = 100
 TWO_LEVEL = "studies/12-cognitive-literature-leaderboard/analysis/two_level_em_fits.csv"
 PER_SUBJECT = "studies/12-cognitive-literature-leaderboard/analysis/per_subject_fits.csv"
 OFF_BOUND = 3.0      # |mu| on the probit scale up to which a typical value is off its bounds
-MU_TOL = 0.1         # median |recovered - true mu|, probit scale
+# off a bound, the median |recovered - true mu| (probit scale) must not exceed the per-subject fit's on
+# the same data (#36, amended 2026-11-03: a fixed 0.1 was tighter than ~11 sessions allow)
 BOUND_TOL = 0.05     # median |recovered - true| / range, natural scale, for a typical value on a bound
 SIGMA_MIN = 0.2      # spreads checked only where the true spread is at least this
 SIGMA_RATIO = 2.0    # median recovered / true spread within [1/2, 2]
@@ -100,6 +101,7 @@ def check(prog, true: dict, records: list[dict]) -> dict:
     mu_true = np.stack([true[r["subject_id"].removeprefix("sim-")][0] for r in records])
     sig_true = np.exp(np.stack([true[r["subject_id"].removeprefix("sim-")][1] for r in records]))
     mu_rec = np.stack([np.asarray(fitting.from_params(prog, r["typical_params"])) for r in records])
+    mu_per = np.stack([np.asarray(fitting.from_params(prog, r["params"])) for r in records])
     sig_rec = np.exp(np.asarray([r["log_sigma"] for r in records]))
     nat = lambda x: lo + (hi - lo) * jax.scipy.stats.norm.cdf(x)      # noqa: E731
     params = {}
@@ -108,7 +110,8 @@ def check(prog, true: dict, records: list[dict]) -> dict:
         row = {"n_off_bound": int(off.sum()), "n_on_bound": int((~off).sum())}
         if off.any():
             row["mu_error_median"] = float(np.median(np.abs(mu_rec[off, j] - mu_true[off, j])))
-            row["mu_ok"] = row["mu_error_median"] <= MU_TOL
+            row["per_subject_error_median"] = float(np.median(np.abs(mu_per[off, j] - mu_true[off, j])))
+            row["mu_ok"] = row["mu_error_median"] <= row["per_subject_error_median"]
         if (~off).any():
             err = np.abs(np.asarray(nat(mu_rec[~off]))[:, j] - np.asarray(nat(mu_true[~off]))[:, j])
             row["bound_error_median"] = float(np.median(err / (hi[j] - lo[j])))
@@ -150,7 +153,7 @@ def main(argv: list[str] | None = None) -> None:
               "freeze_manifest_sha256": digest(args.freeze / "manifest.json"),
               "cohorts_sha256": digest(args.cohorts),
               "sources": [{"path": p, "sha256": digest(args.studies / p)} for p in (TWO_LEVEL, PER_SUBJECT)],
-              "criteria": {"off_bound": OFF_BOUND, "mu_tol": MU_TOL, "bound_tol": BOUND_TOL,
+              "criteria": {"off_bound": OFF_BOUND, "mu": "<= per-subject fit", "bound_tol": BOUND_TOL,
                            "sigma_min": SIGMA_MIN, "sigma_ratio": SIGMA_RATIO},
               "subjects": subjects, "models": {}}
     for model in args.model or MODELS:

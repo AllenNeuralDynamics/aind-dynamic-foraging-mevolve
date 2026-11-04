@@ -29,8 +29,23 @@ def test_check_passes_when_the_fit_returns_the_truth_and_fails_when_spreads_are_
             for i in range(4)}
     rec = lambda s, scale: {"subject_id": f"sim-{s}", "converged": True, "n_trials": 100,       # noqa: E731
                             "log_lik": -60.0, "per_subject_log_lik": -61.0,
+                            "params": {k: float(v) for k, v in fitting.to_params(prog, true[s][0] + 0.2).items()},
                             "typical_params": {k: float(v) for k, v in fitting.to_params(prog, true[s][0]).items()},
                             "log_sigma": (true[s][1] + np.log(scale)).tolist()}
     assert gate4.check(prog, true, [rec(s, 1.0) for s in true])["ok"]
     bad = gate4.check(prog, true, [rec(s, 3.0) for s in true])
     assert not bad["ok"] and bad["params"]["learn_rate_rew"]["sigma_ok"] is False
+
+
+def test_typical_values_must_beat_the_per_subject_fit():
+    prog = program.literature("hattori2019")
+    true = {f"{i}": (np.array([0.1, -1.2, 0.5, 0.0, -1.8]) + 0.1 * i, np.log([0.3, 0.4, 0.4, 0.1, 0.1]))
+            for i in range(4)}
+    rec = lambda s, two_level, per: {                                                           # noqa: E731
+        "subject_id": f"sim-{s}", "converged": True, "n_trials": 100, "log_lik": -60.0, "per_subject_log_lik": -61.0,
+        "typical_params": {k: float(v) for k, v in fitting.to_params(prog, true[s][0] + two_level).items()},
+        "params": {k: float(v) for k, v in fitting.to_params(prog, true[s][0] + per).items()},
+        "log_sigma": true[s][1].tolist()}
+    assert gate4.check(prog, true, [rec(s, 0.1, 0.2) for s in true])["ok"]
+    worse = gate4.check(prog, true, [rec(s, 0.2, 0.1) for s in true])
+    assert not worse["ok"] and worse["params"]["learn_rate_rew"]["mu_ok"] is False
