@@ -84,6 +84,7 @@ def test_precheck_stops_when_too_many_programs_are_close():
 
 
 def test_a_simulated_run_needs_no_freeze_and_passes_its_files_to_the_eval_script(tmp_path, monkeypatch):
+    pytest.importorskip("shinka")
     from mevolve.search import run
 
     cfg = tmp_path / "run.json"
@@ -111,9 +112,18 @@ def test_a_simulated_run_needs_no_freeze_and_passes_its_files_to_the_eval_script
     assert args["simulated_validation"] == str(tmp_path / "v.json.gz") and "freeze" not in args
 
 
-def test_the_eval_script_needs_the_freeze_or_simulated_files(tmp_path):
+@pytest.mark.parametrize("extra", [[], ["--simulated_generation", "g.json.gz"],
+                                   ["--simulated_validation", "v.json.gz", "--freeze", "f", "--cohorts", "c",
+                                    "--generation", "g", "--validation", "v"],
+                                   ["--simulated_generation", "g", "--simulated_validation", "v", "--freeze", "f"]])
+def test_the_eval_script_needs_the_freeze_or_both_simulated_files(tmp_path, extra):
     from mevolve.search import shinka_eval
 
     with pytest.raises(SystemExit):
         shinka_eval.main(["--program_path", str(tmp_path / "m.py"), "--results_dir", str(tmp_path / "r"),
-                          "--workers", "1"])
+                          "--workers", "1", *extra])
+
+
+def test_precheck_stops_when_the_target_is_a_seed():
+    out = precheck.decide(scores(), "Hattori2019", SEEDS + ["Hattori2019"])
+    assert not out["ok"] and any("seeds" in r and "Hattori2019" in r for r in out["stop"])

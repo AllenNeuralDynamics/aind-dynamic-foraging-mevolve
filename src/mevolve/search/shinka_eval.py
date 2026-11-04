@@ -191,7 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max_em", type=int, default=20)
     parser.add_argument("--n_draws", type=int, default=2048)
     args = parser.parse_args(argv)
+    if bool(args.simulated_generation) != bool(args.simulated_validation):
+        parser.error("give both --simulated_generation and --simulated_validation, or neither")
     simulated = (args.simulated_generation, args.simulated_validation) if args.simulated_generation else None
+    if simulated and any((args.freeze, args.cohorts, args.generation, args.validation)):
+        parser.error("the --simulated_ files replace --freeze, --cohorts, --generation and --validation")
     if not simulated and not all((args.freeze, args.cohorts, args.generation, args.validation)):
         parser.error("give --freeze, --cohorts, --generation and --validation, or the two --simulated_ files")
     from mevolve.search.checks import ProgramRejected

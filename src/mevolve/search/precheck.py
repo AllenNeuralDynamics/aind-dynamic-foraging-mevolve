@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 TOLERANCE = 0.2         # the pass tolerance on the x100 scale (study 40 PLAN: 0.002 in pooled likelihood)
@@ -38,8 +39,8 @@ def decide(scores: dict[str, dict], target: str, seeds: list[str]) -> dict:
         stop.append(f"{target}'s own 2-level fit failed, so the target is not a 2-level score")
     if margins["template"] < EXCLUDE_WITHIN:
         stop.append(f"the template is within {EXCLUDE_WITHIN} of the target")
-    if set(close) & set(seeds):
-        stop.append(f"the rule would leave out seeds: {sorted(set(close) & set(seeds))}")
+    if {target, *close} & set(seeds):        # a seed is on an island whatever the library holds
+        stop.append(f"the rule would leave out seeds: {sorted({target, *close} & set(seeds))}")
     if len(close) > MAX_EXCLUDED:
         stop.append(f"the rule would leave out {len(close)} programs besides {target}")
     return {"target": target, "target_score": goal, "tolerance": TOLERANCE, "exclude_within": EXCLUDE_WITHIN,
@@ -62,7 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     if not config["simulated"]:
         parser.error("the pre-check is for a search on simulated subjects (config simulated)")
-    Path(config["results_dir"]).mkdir(parents=True, exist_ok=True)
+    # its own working directory: the search needs an empty results_dir; the seed cache is shared
+    config = {**config, "results_dir": tempfile.mkdtemp(prefix="precheck-")}
     rows = {}
     for name, code in [("template", seeds.TEMPLATE)] + [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]:
         m = seed_metrics(name, code, config)
