@@ -141,3 +141,40 @@ def test_precheck_stops_when_the_target_is_a_seed():
 def test_precheck_compares_unrounded_margins():
     out = precheck.decide(scores(Bari2019=72.60004), "Hattori2019", SEEDS)     # 0.39996 below: within 0.4
     assert "Bari2019" in out["library_exclude"]
+
+
+def test_a_target_outside_the_library_is_never_in_library_exclude():
+    s = scores(Bari2019=72.7)
+    s["NewProgram"] = s.pop("Hattori2019")
+    out = precheck.decide(s, "NewProgram", SEEDS, target_in_library=False)
+    assert out["library_exclude"] == ["Bari2019"] and out["ok"]
+
+
+def test_a_new_generating_program_gets_its_own_stream():
+    a = gate4.stream(0, "hattori_satiety", "generation", 0).random(3)
+    assert np.array_equal(a, gate4.stream(0, "hattori_satiety", "generation", 0).random(3))
+    assert not np.array_equal(a, gate4.stream(0, "Hattori2019", "generation", 0).random(3))
+
+
+def test_truths_come_from_the_programs_own_fit(tmp_path):
+    from mevolve import program
+    from mevolve.search import seeds
+
+    path = tmp_path / "gen.py"
+    path.write_text(seeds.TEMPLATE)
+    prog = program.load(path)
+    fit = tmp_path / "truths.json"
+    fit.write_text(json.dumps({"subjects": {"m1": {"typical_params": {"side_bias": 0.0, "stickiness": 1.0},
+                                                   "log_sigma": [-1.0, -2.0], "converged": True}}}))
+    true = gate4.truths_from_fit(prog, fit, ["m1"])
+    assert true["m1"][1].tolist() == [-1.0, -2.0] and true["m1"][0].shape == (2,)
+    with pytest.raises(ValueError, match="no fit"):
+        gate4.truths_from_fit(prog, fit, ["m1", "m2"])
+
+
+@pytest.mark.parametrize("extra", [["--program-path", "g.py"], ["--program-path", "g.py", "--model", "Hattori2019",
+                                                                 "--truths", "t.json"]])
+def test_gate4_refuses_a_program_path_without_truths_or_with_a_model(tmp_path, extra):
+    with pytest.raises(SystemExit):
+        gate4.main(["--freeze", str(tmp_path), "--cohorts", str(tmp_path / "c.json"), "--studies", str(tmp_path),
+                    "--out", str(tmp_path / "o"), *extra])

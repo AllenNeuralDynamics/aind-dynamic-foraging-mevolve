@@ -6,7 +6,8 @@ library, and can copy any of them in one proposal. So every one is scored first 
 simulated subjects, with the search's settings, and the rule fixed before the search (study 40,
 variant ``gate4-recovery``) is applied:
 
-- the target is left out of the library, always;
+- the target is left out of the library, always (when it is a library program; a target from a
+  file, outside the library, is never in it);
 - any other library program within ``2 x TOLERANCE`` of the target is left out too;
 - stop and ask (Han) if the target's own 2-level fit fails, if the rule would leave out a seed or
   more than ``MAX_EXCLUDED`` programs, or if the template is already that close.
@@ -14,6 +15,7 @@ variant ``gate4-recovery``) is applied:
 Scores are cached like the search's seeds (``seed_metrics``), so the search reuses them.
 
     python -m mevolve.search.precheck --config run.json --target Hattori2019 --out precheck.json
+    python -m mevolve.search.precheck --config run.json --target path/to/generator.py --out precheck.json
 """
 from __future__ import annotations
 
@@ -28,9 +30,9 @@ EXCLUDE_WITHIN = 2 * TOLERANCE
 MAX_EXCLUDED = 3        # besides the target; more would narrow what the search is shown too far
 
 
-def decide(scores: dict[str, dict], target: str, seeds: list[str]) -> dict:
+def decide(scores: dict[str, dict], target: str, seeds: list[str], target_in_library: bool = True) -> dict:
     """The rule, from each program's ``{"score", "two_level_failed"}`` (x100). ``template`` is the
-    near-empty program on island 0; every other key is a literature program."""
+    near-empty program on island 0; every other key is a literature program, or the target."""
     goal = scores[target]["score"]
     margins = {name: goal - s["score"] for name, s in scores.items()}      # unrounded: the rule uses these
     close = sorted(n for n, m in margins.items() if n not in (target, "template") and m < EXCLUDE_WITHIN)
@@ -45,7 +47,8 @@ def decide(scores: dict[str, dict], target: str, seeds: list[str]) -> dict:
         stop.append(f"the rule would leave out {len(close)} programs besides {target}")
     return {"target": target, "target_score": goal, "tolerance": TOLERANCE, "exclude_within": EXCLUDE_WITHIN,
             "margins": {n: round(m, 4) for n, m in sorted(margins.items(), key=lambda kv: kv[1])},
-            "library_exclude": sorted({target, *close}), "stop": stop, "ok": not stop}
+            "library_exclude": sorted(({target} if target_in_library else set()) | set(close)),
+            "stop": stop, "ok": not stop}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Gate 4: score everything Claude is shown before the search")
     parser.add_argument("--config", type=Path, required=True, help="the search's run config")
-    parser.add_argument("--target", required=True, choices=sorted(LITERATURE))
+    parser.add_argument("--target", required=True, help="a literature program's name, or a program file")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     config = load_config(args.config)
@@ -65,21 +68,31 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("the pre-check is for a search on simulated subjects (config simulated)")
     # its own working directory: the search needs an empty results_dir; the seed cache is shared
     config = {**config, "results_dir": tempfile.mkdtemp(prefix="precheck-")}
+    in_library = args.target in LITERATURE
+    if not in_library and not Path(args.target).is_file():
+        parser.error(f"--target {args.target} is neither a literature program nor a file")
+    target = args.target if in_library else Path(args.target).stem
+    if not in_library and target in LITERATURE:
+        parser.error(f"the target file's name {target} is a literature program's")
+    programs = [("template", seeds.TEMPLATE)] + [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]
+    if not in_library:
+        programs.append((target, seeds.wrap(Path(args.target).read_text())))
     rows = {}
-    for name, code in [("template", seeds.TEMPLATE)] + [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]:
+    for name, code in programs:
         m = seed_metrics(name, code, config)
         rows[name] = {"score": m["combined_score"], "two_level_failed": m["public"]["two_level_failed"],
                       "generation_score": m["public"]["generation_score"], "seconds": m["private"]["seconds"]}
         print(f"{name:32s} {m['combined_score']:8.3f}{'  (2-level failed)' if rows[name]['two_level_failed'] else ''}",
               flush=True)
     result = decide({k: {"score": v["score"], "two_level_failed": v["two_level_failed"]} for k, v in rows.items()},
-                    args.target, config["seeds"])
+                    target, config["seeds"], in_library)
     result.update({"mevolve_git_sha": _git_sha(Path(__file__).resolve().parents[3]), "config": str(args.config),
+                   "target_source": args.target,
                    "simulated": config["simulated"], "max_em": config["max_em"], "n_draws": config["n_draws"],
                    "programs": rows})
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=1) + "\n")
-    print(f"target {args.target} {result['target_score']:.3f}; leave out {result['library_exclude']}", flush=True)
+    print(f"target {target} {result['target_score']:.3f}; leave out {result['library_exclude']}", flush=True)
     for reason in result["stop"]:
         print(f"STOP: {reason}", flush=True)
     return 0 if result["ok"] else 2

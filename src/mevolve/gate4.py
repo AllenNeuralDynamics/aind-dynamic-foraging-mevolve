@@ -19,6 +19,10 @@ subjects (``--cohort``, ``--offset``), each with its own random stream and a man
 
     python -m mevolve.gate4 --freeze <dir> --cohorts cohorts.json --studies <studies checkout> \\
         --out <dir> --model Hattori2019 --cohort validation --offset 0 --tag validation --simulate-only
+
+A generating program outside the literature (``--program-path``) has no study 12 fit, so its
+generating parameters come from its own 2-level EM fit of the real template subjects:
+``--fit-truths`` writes ``truths_<name>_<tag>.json``, and ``--truths`` simulates from it.
 """
 from __future__ import annotations
 
@@ -105,6 +109,17 @@ def simulate(prog, mu, log_sigma, real: list, rng, step) -> list:
     return sessions, params
 
 
+def truths_from_fit(prog, path: Path | str, subjects: list[str]) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Each subject's generating typical values and log spreads on the probit scale, from a
+    ``--fit-truths`` file of the same program."""
+    fits = json.loads(Path(path).read_text())["subjects"]
+    missing = [s for s in subjects if s not in fits]
+    if missing:
+        raise ValueError(f"{path} has no fit for {missing}")
+    return {s: (np.asarray(fitting.from_params(prog, fits[s]["typical_params"])), np.asarray(fits[s]["log_sigma"]))
+            for s in subjects}
+
+
 def load_simulated(path: Path | str) -> list:
     """Subjects saved by ``main``, as ``evaluate.SubjectData`` with their fit and score sessions in
     date order (the files keep no task: every simulated session is ``SIM_TASK``)."""
@@ -126,8 +141,9 @@ def load_simulated(path: Path | str) -> list:
 
 def stream(seed: int, model: str, cohort: str, offset: int):
     """The random stream of one model's simulated subjects. Gate 4's first half (generation, offset
-    0) keeps its original stream; any other cohort or offset gets its own."""
-    key = [seed, MODELS.index(model)]
+    0) keeps its original stream; any other cohort or offset, or a model outside ``MODELS``, gets
+    its own."""
+    key = [seed, MODELS.index(model) if model in MODELS else zlib.crc32(model.encode())]
     if (cohort, offset) != ("generation", 0):
         key.append(zlib.crc32(f"{cohort}:{offset}".encode()))
     return np.random.default_rng(key)
@@ -182,7 +198,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--offset", type=int, default=0, help="first subject of the cohort to use")
     parser.add_argument("--tag", help="file name suffix: simulated_<model>_<tag>.json.gz")
     parser.add_argument("--simulate-only", action="store_true", help="save the subjects; do not fit them")
+    parser.add_argument("--program-path", type=Path, help="a generating program outside MODELS (named by its stem)")
+    parser.add_argument("--fit-truths", action="store_true",
+                        help="fit --program-path to the real subjects and write truths_<name>_<tag>.json; no simulation")
+    parser.add_argument("--truths", type=Path, help="the --fit-truths file to simulate --program-path from")
     args = parser.parse_args(argv)
+    if args.program_path and args.model:
+        parser.error("give --model or --program-path, not both")
+    if args.program_path and not (args.fit_truths or args.truths):
+        parser.error("--program-path needs --fit-truths or --truths")
     sha = _git_sha(Path(__file__).resolve().parents[2])
     studies_sha = _git_sha(args.studies.resolve())
     freeze = Freeze(args.freeze)
@@ -199,10 +223,26 @@ def main(argv: list[str] | None = None) -> None:
               "criteria": {"off_bound": OFF_BOUND, "mu": "<= per-subject fit", "bound_tol": BOUND_TOL,
                            "sigma_min": SIGMA_MIN, "sigma_ratio": SIGMA_RATIO},
               "subjects": subjects, "models": {}}
-    for model in args.model or MODELS:
-        path = program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
+    if args.fit_truths:
+        prog = program.load(args.program_path)
+        data = [evaluate.SubjectData(s, freeze.subject_sessions(s, "fit"), freeze.subject_sessions(s, "score"))
+                for s in subjects]
+        t0 = time.time()
+        records = evaluate.evaluate(args.program_path, data, regime="2level", seed=args.seed, workers=args.workers,
+                                    max_em=MAX_EM)
+        out = args.out / f"truths_{args.program_path.stem}{'_' + args.tag if args.tag else ''}.json"
+        out.write_text(json.dumps({**{k: v for k, v in result.items() if k not in ("models", "criteria")},
+                                   "program": args.program_path.name, "program_sha256": digest(args.program_path),
+                                   "cohort": args.cohort, "offset": args.offset, "score": evaluate.program_score(records),
+                                   "fit_seconds": time.time() - t0,
+                                   "subjects": {r["subject_id"]: {k: r[k] for k in ("typical_params", "log_sigma", "converged")}
+                                                for r in records}}, indent=1) + "\n")
+        print(f"{args.program_path.stem}: fitted {len(records)} subjects of {args.cohort}[{args.offset}:] -> {out}", flush=True)
+        return
+    for model in [args.program_path.stem] if args.program_path else args.model or MODELS:
+        path = args.program_path or program.LITERATURE_DIR / f"{literature.LITERATURE[model][0]}.py"
         prog = program.load(path)
-        true = truths(model, subjects, args.studies)
+        true = truths_from_fit(prog, args.truths, subjects) if args.program_path else truths(model, subjects, args.studies)
         rng = stream(args.seed, model, args.cohort, args.offset)
         step, data, saved = _stepper(prog), [], []
         t0 = time.time()
@@ -222,6 +262,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.simulate_only:
             manifest = {k: v for k, v in result.items() if k not in ("models", "criteria", "max_em")}
             manifest.update({"model": model, "program_sha256": digest(path), "cohort": args.cohort,
+                             **({"truths": str(args.truths), "truths_sha256": digest(args.truths)} if args.truths else {}),
                              "offset": args.offset, "file": out.name, "file_sha256": digest(out),
                              "simulate_seconds": t_sim})
             out.with_name(out.name.replace(".json.gz", ".manifest.json")).write_text(json.dumps(manifest, indent=1) + "\n")
