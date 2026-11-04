@@ -34,7 +34,8 @@ DEFAULTS = {
     "seed_cache": None, "library_in_prompt": True,
     "max_evaluation_jobs": 3, "max_proposal_jobs": 3, "migration_interval": 10, "migration_rate": 0.1,
     "archive_size": 40, "eval_time": "02:00:00", "patch_types": None,
-    "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: a failed reply costs one call, not up to 9
+    "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: no resampling, so not up to 9 calls
+    "max_patch_attempts": 2,    # one repair attempt after an edit that does not apply (Han, 2026-11-04): <= 2 calls
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
 }
@@ -139,7 +140,7 @@ def build_runner(config: dict, task_message: str):
         **({"patch_types": config["patch_types"], "patch_type_probs": [1 / len(config["patch_types"])] * len(config["patch_types"])}
            if config["patch_types"] else {}),
         max_api_costs=config["max_usd"], max_patch_resamples=config["max_patch_resamples"],
-        max_novelty_attempts=config["max_novelty_attempts"], max_patch_attempts=1,
+        max_novelty_attempts=config["max_novelty_attempts"], max_patch_attempts=config["max_patch_attempts"],
         enable_wandb_logging=bool(wandb), wandb_project=wandb.get("project", WANDB_PROJECT),
         wandb_entity=wandb.get("entity", WANDB_ENTITY), wandb_group=wandb.get("group"), wandb_name=wandb.get("name"),
         wandb_mode=wandb.get("mode"), wandb_notes=wandb.get("notes"), wandb_tags=["mevolve"],

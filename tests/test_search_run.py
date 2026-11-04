@@ -68,3 +68,24 @@ def test_generations_that_never_ran_count_as_proposals(tmp_path):
         (tmp_path / f"gen_{g}" / "failure.json").write_text("{}")
     (tmp_path / "gen_2").mkdir()            # a generation with a program row has no failure.json
     assert report.failed_generations(tmp_path) == {1, 5}
+
+
+def test_one_repair_attempt_reaches_shinka(tmp_path, monkeypatch):
+    import shinka.core
+
+    from mevolve.search import run
+
+    assert run.DEFAULTS["max_patch_attempts"] == 2
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def record(**kw):
+        seen.update(kw)
+        raise Stop
+    monkeypatch.setattr(shinka.core, "EvolutionConfig", record)
+    config = {**run.DEFAULTS, "results_dir": str(tmp_path), "max_usd": 1.0}
+    with pytest.raises(Stop):
+        run.build_runner(config, "TASK")
+    assert seen["max_patch_attempts"] == 2 and seen["max_patch_resamples"] == 1
