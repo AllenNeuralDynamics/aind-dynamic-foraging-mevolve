@@ -54,6 +54,7 @@ def load_config(path: Path) -> dict:
     for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts"):
         if config[key]:
             config[key] = expand(key, config[key])
+    config["seeds"] = [expand("seeds", s) for s in config["seeds"]]      # literature names or program files
     if config["simulated"]:
         if set(config["simulated"]) != {"generation", "validation"}:
             raise ValueError("simulated needs exactly generation and validation")
@@ -251,8 +252,8 @@ def main(argv: list[str] | None = None) -> int:
     write_pricing_snapshot(results_dir)
     task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]))
     placed = []
-    for island, name in enumerate(config["seeds"], start=1):
-        code = seeds.literature_source(name)
+    for island, seed in enumerate(config["seeds"], start=1):
+        name, code = seeds.seed_name_and_source(seed)
         placed.append({"name": name, "code": code, "island": island, "metrics": seed_metrics(name, code, config)})
         print(f"seed {name} on island {island}: {placed[-1]['metrics']['combined_score']:.3f}", flush=True)
     claude.install(claude.Settings(ledger=results_dir / "ledger.jsonl", effort=config["effort"],

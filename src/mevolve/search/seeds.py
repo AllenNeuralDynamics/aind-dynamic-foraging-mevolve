@@ -56,6 +56,16 @@ def literature_source(name: str) -> str:
     return wrap((LITERATURE_DIR / f"{LITERATURE[name][0]}.py").read_text())
 
 
+def seed_name_and_source(seed: str) -> tuple[str, str]:
+    """A seed is a literature program's name or a program file (``.py``), named by its stem."""
+    if seed.endswith(".py"):
+        name = Path(seed).stem
+        if name in LITERATURE or name == "template":
+            raise ValueError(f"seed file {seed}: the name {name} is taken (a literature program or the template)")
+        return name, wrap(Path(seed).read_text())
+    return seed, literature_source(seed)
+
+
 def install_island_patch() -> None:
     """Make Shinka's island assignment place a program with ``metadata["mevolve_island"]`` on
     that island, with no copies. Patched on the class, because Shinka builds a fresh database

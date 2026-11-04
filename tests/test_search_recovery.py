@@ -141,3 +141,155 @@ def test_precheck_stops_when_the_target_is_a_seed():
 def test_precheck_compares_unrounded_margins():
     out = precheck.decide(scores(Bari2019=72.60004), "Hattori2019", SEEDS)     # 0.39996 below: within 0.4
     assert "Bari2019" in out["library_exclude"]
+
+
+def test_a_target_outside_the_library_is_never_in_library_exclude():
+    s = scores(Bari2019=72.7)
+    s["NewProgram"] = s.pop("Hattori2019")
+    out = precheck.decide(s, "NewProgram", SEEDS, target_in_library=False)
+    assert out["library_exclude"] == ["Bari2019"] and out["ok"]
+
+
+def test_a_new_generating_program_gets_its_own_stream():
+    a = gate4.stream(0, "hattori_satiety", "generation", 0).random(3)
+    assert np.array_equal(a, gate4.stream(0, "hattori_satiety", "generation", 0).random(3))
+    assert not np.array_equal(a, gate4.stream(0, "Hattori2019", "generation", 0).random(3))
+
+
+def test_truths_come_from_the_programs_own_fit(tmp_path):
+    from mevolve import program
+    from mevolve.search import seeds
+
+    path = tmp_path / "gen.py"
+    path.write_text(seeds.TEMPLATE)
+    prog = program.load(path)
+    fit = tmp_path / "truths.json"
+    fit.write_text(json.dumps({"subjects": {"m1": {"typical_params": {"side_bias": 0.0, "stickiness": 1.0},
+                                                   "log_sigma": [-1.0, -2.0], "converged": True}}}))
+    true = gate4.truths_from_fit(prog, fit, ["m1"])
+    import hashlib
+    saved = json.loads(fit.read_text())
+    saved["program_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    fit.write_text(json.dumps(saved))
+    gate4.truths_from_fit(prog, fit, ["m1"], path)                  # the same program: accepted
+    path.write_text(seeds.TEMPLATE.replace("side_bias", "bias_side"))
+    with pytest.raises(ValueError, match="different program"):
+        gate4.truths_from_fit(prog, fit, ["m1"], path)
+    assert true["m1"][1].tolist() == [-1.0, -2.0] and true["m1"][0].shape == (2,)
+    with pytest.raises(ValueError, match="no fit"):
+        gate4.truths_from_fit(prog, fit, ["m1", "m2"])
+
+
+@pytest.mark.parametrize("extra", [["--program-path", "g.py"], ["--program-path", "g.py", "--model", "Hattori2019",
+                                                                 "--truths", "t.json"],
+                                   ["--truths", "t.json", "--simulate-only"], ["--fit-truths"]])
+def test_gate4_refuses_a_program_path_without_truths_or_with_a_model(tmp_path, extra):
+    with pytest.raises(SystemExit):
+        gate4.main(["--freeze", str(tmp_path), "--cohorts", str(tmp_path / "c.json"), "--studies", str(tmp_path),
+                    "--out", str(tmp_path / "o"), *extra])
+
+
+def test_precheck_refuses_a_target_file_named_like_the_template_or_a_library_program(tmp_path, monkeypatch):
+    for name in ("template", "Bari2019"):
+        target = tmp_path / f"{name}.py"
+        target.write_text("x = 1\n")
+        cfg = tmp_path / "run.json"
+        cfg.write_text(json.dumps({"results_dir": str(tmp_path / "r"), "out_dir": str(tmp_path / "o"),
+                                   "simulated": {"generation": "g", "validation": "v"},
+                                   "workers": 1, "max_evaluation_jobs": 1}))
+        with pytest.raises(SystemExit):
+            precheck.main(["--config", str(cfg), "--target", str(target), "--out", str(tmp_path / "p.json")])
+
+
+def test_a_seed_can_be_a_program_file(tmp_path, monkeypatch):
+    from mevolve.search import seeds
+    from mevolve.search.run import load_config
+
+    path = tmp_path / "one_timescale.py"
+    path.write_text(seeds.TEMPLATE)
+    assert seeds.seed_name_and_source(str(path)) == ("one_timescale", seeds.wrap(seeds.TEMPLATE))
+    assert seeds.seed_name_and_source("Bari2019") == ("Bari2019", seeds.literature_source("Bari2019"))
+    (tmp_path / "Bari2019.py").write_text(seeds.TEMPLATE)
+    with pytest.raises(ValueError, match="is taken"):
+        seeds.seed_name_and_source(str(tmp_path / "Bari2019.py"))
+    monkeypatch.setenv("SEEDS_DIR", str(tmp_path))
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"results_dir": "r", "out_dir": "o", "simulated": {"generation": "g", "validation": "v"},
+                               "workers": 1, "max_evaluation_jobs": 1, "seeds": ["$SEEDS_DIR/one_timescale.py", "Bari2019"]}))
+    assert load_config(cfg)["seeds"] == [str(path), "Bari2019"]
+
+
+@pytest.mark.parametrize("library", [False, True])
+def test_precheck_scores_what_claude_is_shown(tmp_path, monkeypatch, library):
+    from mevolve.literature import LITERATURE
+    from mevolve.search import run, seeds
+
+    for name in ("one_timescale", "two_timescale_ck"):
+        (tmp_path / f"{name}.py").write_text(seeds.TEMPLATE)
+    scored = []
+    def fake(name, code, config):
+        scored.append(name)
+        return {"combined_score": 75.0 if name == "two_timescale_ck" else 70.0,
+                "public": {"two_level_failed": False, "generation_score": 0.0}, "private": {"seconds": 0.0}}
+    monkeypatch.setattr(run, "seed_metrics", fake)
+    monkeypatch.setattr("mevolve.freeze._git_sha", lambda repo: "0" * 40)      # the worktree may be dirty
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"results_dir": "r", "out_dir": "o", "simulated": {"generation": "g", "validation": "v"},
+                               "workers": 1, "max_evaluation_jobs": 1, "library_in_prompt": library,
+                               "seeds": [str(tmp_path / "one_timescale.py"), "Miller-RHG"]}))
+    out = tmp_path / "p.json"
+    assert precheck.main(["--config", str(cfg), "--target", str(tmp_path / "two_timescale_ck.py"), "--out", str(out)]) == 0
+    shown = {"template", "one_timescale", "Miller-RHG"} | (set(LITERATURE) if library else set())
+    assert sorted(scored) == sorted(shown | {"two_timescale_ck"})        # Miller-RHG once
+    assert json.loads(out.read_text())["ok"]
+    if not library:     # references are scored, though not shown
+        (tmp_path / "one_timescale_ck.py").write_text(seeds.TEMPLATE)
+        scored.clear()
+        precheck.main(["--config", str(cfg), "--target", str(tmp_path / "two_timescale_ck.py"), "--out", str(out),
+                       "--reference", "Bari2019", "--reference", str(tmp_path / "one_timescale_ck.py")])
+        assert {"Bari2019", "one_timescale_ck"} <= set(scored)
+
+
+def test_precheck_scores_an_unseen_literature_target_and_refuses_two_programs_with_one_name(tmp_path, monkeypatch):
+    from mevolve.search import run, seeds
+
+    scored = []
+    def fake(name, code, config):
+        scored.append(name)
+        return {"combined_score": 75.0 if name == "Hattori2019" else 70.0,
+                "public": {"two_level_failed": False, "generation_score": 0.0}, "private": {"seconds": 0.0}}
+    monkeypatch.setattr(run, "seed_metrics", fake)
+    monkeypatch.setattr("mevolve.freeze._git_sha", lambda repo: "0" * 40)
+    (tmp_path / "seed").mkdir()
+    (tmp_path / "seed" / "kernel.py").write_text(seeds.TEMPLATE)
+    (tmp_path / "kernel.py").write_text(seeds.TEMPLATE.replace("stickiness", "kernel_weight"))
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"results_dir": "r", "out_dir": "o", "simulated": {"generation": "g", "validation": "v"},
+                               "workers": 1, "max_evaluation_jobs": 1, "library_in_prompt": False,
+                               "seeds": [str(tmp_path / "seed" / "kernel.py")]}))
+    out = tmp_path / "p.json"
+    assert precheck.main(["--config", str(cfg), "--target", "Hattori2019", "--out", str(out)]) == 0
+    assert "Hattori2019" in scored                     # not shown, still scored as the target
+    with pytest.raises(SystemExit):                    # a seed and a reference both named kernel
+        precheck.main(["--config", str(cfg), "--target", "Hattori2019", "--out", str(out),
+                       "--reference", str(tmp_path / "kernel.py")])
+
+
+@pytest.mark.parametrize("program", ["Sat", "Hattori2019", "template"])
+def test_precheck_stops_on_a_score_that_is_not_finite(program):
+    s = scores(Bari2019=70.0)
+    s["Sat"] = {"score": 74.0, "two_level_failed": False}
+    s[program]["score"] = float("nan")
+    out = precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019",))
+    assert not out["ok"] and any("no finite score" in r for r in out["stop"])
+
+
+def test_precheck_stops_when_the_new_mechanism_adds_too_little():
+    s = scores(Bari2019=70.0)
+    s["Sat"] = {"score": 73.1, "two_level_failed": False}      # the target: Hattori2019 plus a mechanism
+    out = precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019",))
+    assert not out["ok"] and any("without its mechanism" in r for r in out["stop"])
+    s["Sat"]["score"] = 73.5
+    assert precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019",))["ok"]
+    s["NoSlow"] = {"score": 73.3, "two_level_failed": False}       # every reference must be 0.4 below
+    assert not precheck.decide(s, "Sat", SEEDS, target_in_library=False, references=("Hattori2019", "NoSlow"))["ok"]
