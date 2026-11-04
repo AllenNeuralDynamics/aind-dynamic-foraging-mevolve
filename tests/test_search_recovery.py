@@ -199,3 +199,12 @@ def test_precheck_refuses_a_target_file_named_like_the_template_or_a_library_pro
                                    "workers": 1, "max_evaluation_jobs": 1}))
         with pytest.raises(SystemExit):
             precheck.main(["--config", str(cfg), "--target", str(target), "--out", str(tmp_path / "p.json")])
+
+
+def test_precheck_stops_when_the_new_mechanism_adds_too_little():
+    s = scores(Bari2019=70.0)
+    s["Sat"] = {"score": 73.1, "two_level_failed": False}      # the target: Hattori2019 plus a mechanism
+    out = precheck.decide(s, "Sat", SEEDS, target_in_library=False, reference="Hattori2019")
+    assert not out["ok"] and any("without its mechanism" in r for r in out["stop"])
+    s["Sat"]["score"] = 73.5
+    assert precheck.decide(s, "Sat", SEEDS, target_in_library=False, reference="Hattori2019")["ok"]
