@@ -58,3 +58,13 @@ def test_a_lost_copy_fails_a_good_run_but_not_a_failed_one(tmp_path, monkeypatch
         run.keep_outputs(tmp_path / "results", tmp_path / "out", run_failed=False)
     run.keep_outputs(tmp_path / "results", tmp_path / "out", run_failed=True)     # the run's error wins
     assert "copy to" in capsys.readouterr().err
+
+
+def test_generations_that_never_ran_count_as_proposals(tmp_path):
+    from mevolve.search import report
+
+    for g in (1, 5):
+        (tmp_path / f"gen_{g}").mkdir()
+        (tmp_path / f"gen_{g}" / "failure.json").write_text("{}")
+    (tmp_path / "gen_2").mkdir()            # a generation with a program row has no failure.json
+    assert report.failed_generations(tmp_path) == {1, 5}

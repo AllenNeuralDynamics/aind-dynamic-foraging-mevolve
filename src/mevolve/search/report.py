@@ -41,6 +41,12 @@ def proposals(run_dir: Path) -> list[dict]:
     return out
 
 
+def failed_generations(run_dir: Path) -> set[int]:
+    """Generations Shinka gave up on before evaluating (an edit that did not apply, say): it writes
+    ``gen_N/failure.json`` and no program row."""
+    return {int(f.parent.name.split("_")[1]) for f in Path(run_dir).glob("gen_*/failure.json")}
+
+
 def summary(run_dir: Path) -> dict:
     run_dir = Path(run_dir)
     rows = proposals(run_dir)
@@ -49,12 +55,14 @@ def summary(run_dir: Path) -> dict:
     config = json.loads((run_dir / "run_config.json").read_text()) if (run_dir / "run_config.json").exists() else {}
     children = [r for r in rows if r["generation"] > 0]
     valid = [r for r in children if r["correct"]]
+    failed = failed_generations(run_dir) - {r["generation"] for r in children}    # an edit that never ran
     improving = [r for r in valid if isinstance(r["delta_vs_parent"], float) and r["delta_vs_parent"] > 0.05]
     cost = sum(c["cost"] for c in calls)
     seeds = [r for r in rows if r["generation"] == 0]
     return {
         "run": run_dir.name, "effort": config.get("effort"), "model": config.get("model"),
-        "proposals": len(children), "valid": len(valid), "improving_by_0.05": len(improving),
+        "proposals": len(children) + len(failed), "not_applied": len(failed), "valid": len(valid),
+        "improving_by_0.05": len(improving),
         "api_calls": len(calls), "errors": sum("error" in c for c in calls),
         "refusals": sum(c.get("stop_reason") == "refusal" for c in calls),
         "cut_off": sum(c.get("stop_reason") == "max_tokens" for c in calls),
