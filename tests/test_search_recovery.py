@@ -250,6 +250,31 @@ def test_precheck_scores_what_claude_is_shown(tmp_path, monkeypatch, library):
         assert {"Bari2019", "one_timescale_ck"} <= set(scored)
 
 
+def test_precheck_scores_an_unseen_literature_target_and_refuses_two_programs_with_one_name(tmp_path, monkeypatch):
+    from mevolve.search import run, seeds
+
+    scored = []
+    def fake(name, code, config):
+        scored.append(name)
+        return {"combined_score": 75.0 if name == "Hattori2019" else 70.0,
+                "public": {"two_level_failed": False, "generation_score": 0.0}, "private": {"seconds": 0.0}}
+    monkeypatch.setattr(run, "seed_metrics", fake)
+    monkeypatch.setattr("mevolve.freeze._git_sha", lambda repo: "0" * 40)
+    (tmp_path / "seed").mkdir()
+    (tmp_path / "seed" / "kernel.py").write_text(seeds.TEMPLATE)
+    (tmp_path / "kernel.py").write_text(seeds.TEMPLATE.replace("stickiness", "kernel_weight"))
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"results_dir": "r", "out_dir": "o", "simulated": {"generation": "g", "validation": "v"},
+                               "workers": 1, "max_evaluation_jobs": 1, "library_in_prompt": False,
+                               "seeds": [str(tmp_path / "seed" / "kernel.py")]}))
+    out = tmp_path / "p.json"
+    assert precheck.main(["--config", str(cfg), "--target", "Hattori2019", "--out", str(out)]) == 0
+    assert "Hattori2019" in scored                     # not shown, still scored as the target
+    with pytest.raises(SystemExit):                    # a seed and a reference both named kernel
+        precheck.main(["--config", str(cfg), "--target", "Hattori2019", "--out", str(out),
+                       "--reference", str(tmp_path / "kernel.py")])
+
+
 def test_precheck_stops_when_the_new_mechanism_adds_too_little():
     s = scores(Bari2019=70.0)
     s["Sat"] = {"score": 73.1, "two_level_failed": False}      # the target: Hattori2019 plus a mechanism

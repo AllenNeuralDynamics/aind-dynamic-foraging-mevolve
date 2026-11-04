@@ -91,11 +91,13 @@ def main(argv: list[str] | None = None) -> int:
     if config["library_in_prompt"]:
         shown += [(n, seeds.literature_source(n)) for n in sorted(LITERATURE)]
     references = [seeds.seed_name_and_source(r) for r in args.reference]
-    programs = list({name: code for name, code in shown + references}.items())    # each program once
-    if not in_library:
-        programs.append((target, seeds.wrap(Path(args.target).read_text())))
+    target_code = seeds.literature_source(target) if in_library else seeds.wrap(Path(args.target).read_text())
+    programs = {}                       # each program once; one name never stands for two programs
+    for name, code in shown + references + [(target, target_code)]:
+        if programs.setdefault(name, code) != code:
+            parser.error(f"two different programs are named {name}")
     rows = {}
-    for name, code in programs:
+    for name, code in programs.items():
         m = seed_metrics(name, code, config)
         rows[name] = {"score": m["combined_score"], "two_level_failed": m["public"]["two_level_failed"],
                       "generation_score": m["public"]["generation_score"], "seconds": m["private"]["seconds"]}
