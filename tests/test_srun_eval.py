@@ -132,3 +132,15 @@ def test_a_step_gets_one_memory_setting_and_no_keys():
                               "PATH": "/bin"})
     assert env == {"SLURM_MEM_PER_CPU": "3500", "PATH": "/bin"}
     assert srun_eval.step_env({"SLURM_MEM_PER_NODE": "200000"}) == {"SLURM_MEM_PER_NODE": "200000"}
+
+
+def test_results_are_copied_without_their_mode(tmp_path):
+    # files on /allen carry mode 000 and grant access through ACLs: copying the mode makes the local copy unreadable
+    src = tmp_path / "stage"
+    src.mkdir()
+    for name in srun_eval.RESULT_FILES:
+        (src / name).write_text("{}")
+        (src / name).chmod(0o400)
+    srun_eval.copy_back(src, tmp_path / "results", wait_s=0)
+    for name in srun_eval.RESULT_FILES:
+        assert (tmp_path / "results" / name).stat().st_mode & 0o600 == 0o600

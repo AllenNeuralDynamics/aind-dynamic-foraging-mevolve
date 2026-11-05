@@ -54,7 +54,7 @@ def copy_back(stage_results: Path, results: Path, wait_s: float = 30.0) -> None:
         while not src.exists() and time.time() < deadline:
             time.sleep(1.0)
         if src.exists():
-            shutil.copy2(src, results / name)
+            shutil.copyfile(src, results / name)     # contents only: /allen files carry mode 000 + ACLs
 
 
 def step_env(environ) -> dict:
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     stage = args.stage_dir / stage_name(Path(cmd[cmd.index("--program_path") + 1]))
     staged, program, results = rewrite(cmd, stage)
     stage.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(program, stage / "main.py")
+    shutil.copyfile(program, stage / "main.py")
     env = step_env(os.environ)
     code = subprocess.run([*SRUN, f"--cpus-per-task={args.cpus}", *staged], env=env).returncode
     copy_back(stage / "results", results)
