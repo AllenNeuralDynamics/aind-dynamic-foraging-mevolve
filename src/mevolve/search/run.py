@@ -280,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
         if config["out_dir"]:
             keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
+    from .archive import archive_run
+    archive_run(config, config["out_dir"] and Path(config["out_dir"]), args.dry)     # a W&B artifact (#54)
     return 0
 
 
