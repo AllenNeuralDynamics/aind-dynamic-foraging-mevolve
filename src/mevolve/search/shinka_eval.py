@@ -26,6 +26,7 @@ import os
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 SECRETS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "WANDB_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN")
@@ -285,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     if key and correct and not hit:        # failures are never stored: they are evaluated again
         try:                               # best effort: a failed write must not fail a scored program
             args.repeat_cache.mkdir(parents=True, exist_ok=True)
-            tmp = args.repeat_cache / f".{key}.{os.getpid()}"
+            tmp = args.repeat_cache / f".{key}.{uuid.uuid4().hex}"     # unique on every node (the cache is shared)
             tmp.write_text(json.dumps({"program": str(args.program_origin or args.program_path), "metrics": metrics},
                                       default=float) + "\n")
             tmp.replace(args.repeat_cache / f"{key}.json")
