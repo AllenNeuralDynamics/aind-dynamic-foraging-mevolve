@@ -105,3 +105,34 @@ def test_a_failed_upload_still_finishes_its_wandb_run(tmp_path, fake_wandb, monk
     monkeypatch.setattr(FakeArtifact, "add_file", broken)
     assert archive.archive_run({"wandb": {"group": "g@1", "mode": "online"}}, run_dir(tmp_path), False) is None
     assert fake_wandb["finished"]
+
+
+def test_an_inherited_offline_mode_skips_the_archive(tmp_path, fake_wandb, monkeypatch):
+    monkeypatch.setenv("WANDB_MODE", "offline")
+    assert archive.archive_run({"wandb": {"group": "g@1"}}, run_dir(tmp_path), False) is None
+    assert archive.archive_run({"wandb": {"group": "g@1", "mode": "online"}}, run_dir(tmp_path / "b"), False)
+    assert len(fake_wandb["logged"]) == 1                  # an explicit online wins
+
+
+def test_a_missing_directory_is_never_uploaded(tmp_path, fake_wandb):
+    with pytest.raises(FileNotFoundError):
+        archive.archive(tmp_path / "typo", "g@1", "e", "p")
+    assert "init" not in fake_wandb
+
+
+def test_a_failed_copy_archives_the_complete_original(tmp_path, fake_wandb, monkeypatch):
+    pytest.importorskip("shinka")
+    import shutil
+
+    from mevolve.search import run
+
+    results = run_dir(tmp_path)
+
+    def partial(src, dst, **k):
+        (tmp_path / "out").mkdir()
+        (tmp_path / "out" / "ledger.jsonl").write_text("x")
+        raise OSError("No space left on device")
+    monkeypatch.setattr(shutil, "copytree", partial)
+    run.end_of_run({"out_dir": str(tmp_path / "out"), "wandb": {"group": "g@1", "mode": "online"}}, results,
+                   run_failed=True, dry=False)
+    assert "programs.sqlite" in fake_wandb["logged"][0].files and (results / "archive.json").exists()

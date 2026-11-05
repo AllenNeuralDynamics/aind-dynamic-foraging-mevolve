@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shlex
 import sys
@@ -44,7 +45,9 @@ def archive(root: Path, group: str, entity: str, project: str) -> dict:
     import wandb
 
     root = Path(root)
-    files = files_to_archive(root)
+    files = files_to_archive(root) if root.is_dir() else []
+    if not files:           # a mistyped retry must not publish an empty version of an archive
+        raise FileNotFoundError(f"{root} has no files to archive")
     sha256 = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.name in KEY_FILES}
     run = wandb.init(entity=entity, project=project, group=group, job_type="archive", name=f"archive-{group}",
                      notes=f"Archive of {group}'s run directory {root} (scratch is not durable).", reinit="create_new",
@@ -71,7 +74,8 @@ def archive_run(config: dict, out_dir: Path | None, dry: bool) -> dict | None:
     from .run import WANDB_ENTITY, WANDB_PROJECT
 
     wandb_cfg = config["wandb"]
-    if dry or not out_dir or not wandb_cfg or wandb_cfg.get("mode") in ("offline", "disabled"):
+    mode = (wandb_cfg or {}).get("mode") or os.environ.get("WANDB_MODE")     # what the search's own W&B run used
+    if dry or not out_dir or not wandb_cfg or mode in ("offline", "disabled", "dryrun"):
         return None
     group, entity, project = wandb_cfg.get("group"), wandb_cfg.get("entity", WANDB_ENTITY), wandb_cfg.get("project", WANDB_PROJECT)
     if not group:
