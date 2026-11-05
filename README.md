@@ -60,6 +60,21 @@ convergence, on any pool of the freeze, from a clean checkout:
 python -m mevolve.score --model Hattori2019 --pool all --freeze <freeze> --out <dir> --workers 112
 ```
 
+**A search on many nodes** (`eval_launch: "srun"`, `stage_dir` on /allen; #59). One Slurm job holds
+`--ntasks=N --cpus-per-task=C --mem-per-cpu=1500M`. Each evaluation is an `srun` step of `C` CPUs with
+`workers = C / 2` (one per core), and `max_evaluation_jobs = N`. Choose `C` from the free-CPU landscape
+so that the job **ends** earliest (Han, 2026-11-05), not by the speed of one evaluation:
+
+- **No GPU nodes:** the cluster's submit filter gives every CPU-only job `Features=cpu`, so only free
+  CPUs on `cpu`-feature nodes count; on 2026-11-05 most free CPUs were on GPU nodes.
+- **Count the slots:** for each candidate `C`, count the slots that fit on `cpu` nodes, in both CPUs and
+  memory (`scontrol show node -o`: `CPUTot - CPUAlloc` and `RealMemory - AllocMem`). Read Slurm's
+  planned start with `sbatch --test-only`.
+- **Estimate the run:** one 48 + 48 evaluation is about 9,000 CPU-seconds, so it takes about
+  9,000 / workers × 1.2 s, and never less than its slowest mouse (about 250 s).
+
+On 2026-11-05, slots of 56 CPUs were planned for the next morning, while 17 slots of 24 CPUs fit at once.
+
 ## What it does
 
 - An LLM (Claude) proposes **programs**: short JAX modules that predict each choice of a mouse

@@ -172,8 +172,10 @@ def test_a_killed_wrapper_stops_its_step(cluster):
     wrapper.wait()
     for _ in range(50):
         try:
-            os.kill(step, 0)
-        except ProcessLookupError:
+            with open(f"/proc/{step}/stat") as f:      # a zombie waiting to be reaped has stopped
+                if f.read().split()[2] == "Z":
+                    return
+        except (FileNotFoundError, ProcessLookupError):
             return
         time.sleep(0.1)
     os.kill(step, signal.SIGKILL)
