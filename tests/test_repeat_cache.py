@@ -92,7 +92,28 @@ def test_a_repeat_still_passes_the_static_checks(tmp_path, monkeypatch):
     assert "static checks" in json.loads((program.parent / "results" / "correct.json").read_text())["error"]
 
 
+def test_an_unreadable_cache_entry_is_a_miss(tmp_path, monkeypatch):
+    calls = []
+    run(tmp_path, "gen_1", TEMPLATE, monkeypatch, calls)
+    for entry in (tmp_path / "cache").glob("*.json"):
+        entry.write_text("{not json")
+    out = run(tmp_path, "gen_2", TEMPLATE, monkeypatch, calls)
+    assert calls == ["gen_1", "gen_2"] and out["combined_score"] == 72.5
+
+
+def test_a_missing_data_file_still_writes_the_result_files(tmp_path, monkeypatch):
+    program = tmp_path / "gen_1" / "main.py"
+    program.parent.mkdir()
+    program.write_text(TEMPLATE)
+    shinka_eval.main(["--program_path", str(program), "--results_dir", str(program.parent / "results"),
+                      "--simulated_generation", str(tmp_path / "missing.json.gz"),
+                      "--simulated_validation", str(tmp_path / "missing.json.gz"),
+                      "--workers", "1", "--repeat_cache", str(tmp_path / "cache")])
+    assert not json.loads((program.parent / "results" / "correct.json").read_text())["correct"]
+
+
 def test_the_run_passes_the_cache_to_the_evaluation(tmp_path, monkeypatch):
+    pytest.importorskip("shinka")
     import shinka.launch
 
     from mevolve.search import run as search_run

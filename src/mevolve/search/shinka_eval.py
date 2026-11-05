@@ -200,6 +200,17 @@ def repeat_key(source: str, simulated: tuple[Path, Path] | None, freeze_dir: Pat
     return hashlib.sha256(json.dumps([code, *data, workers, max_em, n_draws, evaluator_digest()]).encode()).hexdigest()
 
 
+def _cached(entry: Path) -> dict | None:
+    """A repeat-cache entry, or None: a missing or unreadable entry is a miss, so the program is evaluated."""
+    try:
+        hit = json.loads(entry.read_text())
+        if isinstance(hit["program"], str) and isinstance(hit["metrics"]["private"], dict):
+            return hit
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
 def write_results(results_dir: Path, metrics: dict | None, error: str | None) -> bool:
     """Shinka's ``correct.json`` and ``metrics.json``; a missing or non-finite score is incorrect."""
     results_dir = Path(results_dir)
@@ -243,13 +254,12 @@ def main(argv: list[str] | None = None) -> int:
     from mevolve.search.checks import ProgramRejected, check_source
 
     metrics, error, hit, key = None, None, None, None
-    if args.repeat_cache:
-        source = Path(args.program_path).read_text()
-        key = repeat_key(source, simulated, args.freeze, args.cohorts, args.generation, args.validation,
-                         args.workers, args.max_em, args.n_draws)
-        if key and (args.repeat_cache / f"{key}.json").exists():
-            hit = json.loads((args.repeat_cache / f"{key}.json").read_text())
     try:
+        if args.repeat_cache:
+            source = Path(args.program_path).read_text()
+            key = repeat_key(source, simulated, args.freeze, args.cohorts, args.generation, args.validation,
+                             args.workers, args.max_em, args.n_draws)
+            hit = _cached(args.repeat_cache / f"{key}.json") if key else None
         if hit:                 # the same code was scored: its checks again (on this source), then its metrics
             check_source(source)
             metrics = {**hit["metrics"], "private": {**hit["metrics"]["private"], "repeat_of": hit["program"]}}
