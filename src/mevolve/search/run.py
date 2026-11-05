@@ -278,21 +278,34 @@ def main(argv: list[str] | None = None) -> int:
               flush=True)
         run_failed = False
     finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
-        if config["out_dir"]:
-            keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
+        end_of_run(config, results_dir, run_failed, args.dry)
     return 0
 
 
-def keep_outputs(results_dir: Path, out_dir: Path, run_failed: bool) -> None:
+def end_of_run(config: dict, results_dir: Path, run_failed: bool, dry: bool) -> None:
+    """Copy the results to ``out_dir`` and archive them as a W&B artifact (#54), after a failed run too."""
+    if config["out_dir"]:
+        from .archive import archive_run
+        try:
+            kept = keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
+        except OSError:     # a good run whose copy failed: archive the original before the job fails
+            archive_run(config, results_dir, dry)
+            raise
+        archive_run(config, Path(config["out_dir"]) if kept else results_dir, dry)     # a partial copy: the original
+
+
+def keep_outputs(results_dir: Path, out_dir: Path, run_failed: bool) -> bool:
     """Copy the node-local results to ``out_dir``. A failed copy after a good run is the job's
     failure (the database and ledger would be lost at cleanup), so it raises; after a failed run it
-    is only printed, so the run's own error is the one reported."""
+    is only printed, so the run's own error is the one reported, and it returns False."""
     try:
         shutil.copytree(results_dir, out_dir, dirs_exist_ok=True)
     except OSError as e:
         print(f"copy to {out_dir} failed: {e}", file=sys.stderr, flush=True)
         if not run_failed:
             raise
+        return False
+    return True
 
 
 if __name__ == "__main__":
