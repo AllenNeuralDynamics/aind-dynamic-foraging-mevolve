@@ -47,17 +47,20 @@ def archive(root: Path, group: str, entity: str, project: str) -> dict:
     files = files_to_archive(root)
     sha256 = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.name in KEY_FILES}
     run = wandb.init(entity=entity, project=project, group=group, job_type="archive", name=f"archive-{group}",
-                     notes=f"Archive of {group}'s run directory {root} (scratch is not durable).", reinit="create_new")
-    art = wandb.Artifact(artifact_name(group), type=ARTIFACT_TYPE, description=f"{group}: {root}",
-                         metadata={"wandb_group": group, "sha256": sha256})
-    for p in files:
-        art.add_file(str(p), name=str(p.relative_to(root)))
-    run.log_artifact(art)
-    art.wait()
-    record = {"artifact": f"{entity}/{project}/{art.name}", "digest": art.digest, "wandb_group": group,
-              "n_files": len(files), "bytes": sum(p.stat().st_size for p in files), "archive_run": run.url,
-              "sha256": sha256}
-    run.finish()
+                     notes=f"Archive of {group}'s run directory {root} (scratch is not durable).", reinit="create_new",
+                     mode="online")         # an upload, whatever WANDB_MODE the job inherited
+    try:
+        art = wandb.Artifact(artifact_name(group), type=ARTIFACT_TYPE, description=f"{group}: {root}",
+                             metadata={"wandb_group": group, "sha256": sha256})
+        for p in files:
+            art.add_file(str(p), name=str(p.relative_to(root)))
+        run.log_artifact(art)
+        art.wait()
+        record = {"artifact": f"{entity}/{project}/{art.name}", "digest": art.digest, "wandb_group": group,
+                  "n_files": len(files), "bytes": sum(p.stat().st_size for p in files), "archive_run": run.url,
+                  "sha256": sha256}
+    finally:
+        run.finish()
     (root / RECORD).write_text(json.dumps(record, indent=1) + "\n")
     return record
 
@@ -70,7 +73,10 @@ def archive_run(config: dict, out_dir: Path | None, dry: bool) -> dict | None:
     wandb_cfg = config["wandb"]
     if dry or not out_dir or not wandb_cfg or wandb_cfg.get("mode") in ("offline", "disabled"):
         return None
-    group, entity, project = wandb_cfg["group"], wandb_cfg.get("entity", WANDB_ENTITY), wandb_cfg.get("project", WANDB_PROJECT)
+    group, entity, project = wandb_cfg.get("group"), wandb_cfg.get("entity", WANDB_ENTITY), wandb_cfg.get("project", WANDB_PROJECT)
+    if not group:
+        print(f"{out_dir} is not archived: the W&B config has no group to name the artifact", file=sys.stderr, flush=True)
+        return None
     try:
         return archive(Path(out_dir), group, entity, project)
     except Exception as e:  # noqa: BLE001 - the archive must never cost the run its outputs

@@ -56,6 +56,7 @@ def test_the_run_directory_becomes_one_artifact_with_a_record(tmp_path, fake_wan
     assert art.type == "mevolve-run" and art.name == "run-gate4-recovery-20261104-132600:v0"
     assert sorted(art.files) == ["gen_1/main.py", "ledger.jsonl", "programs.sqlite", "programs.sqlite-wal"]
     assert fake_wandb["init"]["group"] == "gate4-recovery@20261104-132600" and fake_wandb["init"]["job_type"] == "archive"
+    assert fake_wandb["init"]["mode"] == "online"           # not an inherited WANDB_MODE
     assert fake_wandb["finished"]
     saved = json.loads((d / "archive.json").read_text())
     assert saved == record and record["digest"] == "d1g3st" and record["n_files"] == 4
@@ -65,7 +66,8 @@ def test_the_run_directory_becomes_one_artifact_with_a_record(tmp_path, fake_wan
 
 
 @pytest.mark.parametrize("wandb_cfg, dry", [(None, False), ({"group": "g@1", "mode": "offline"}, False),
-                                            ({"group": "g@1", "mode": "disabled"}, False), ({"group": "g@1"}, True)])
+                                            ({"group": "g@1", "mode": "disabled"}, False), ({"group": "g@1"}, True),
+                                            ({"name": "no group", "mode": "online"}, False)])
 def test_no_archive_without_online_wandb_or_on_a_dry_run(tmp_path, fake_wandb, wandb_cfg, dry):
     assert archive.archive_run({"wandb": wandb_cfg}, run_dir(tmp_path), dry) is None
     assert not fake_wandb["logged"]
@@ -95,3 +97,11 @@ def test_a_failed_search_is_kept_and_archived(tmp_path, fake_wandb):
     run.end_of_run(config, results, run_failed=True, dry=False)
     assert (tmp_path / "out" / "ledger.jsonl").exists() and fake_wandb["logged"]
     assert (tmp_path / "out" / "archive.json").exists()
+
+
+def test_a_failed_upload_still_finishes_its_wandb_run(tmp_path, fake_wandb, monkeypatch):
+    def broken(*a, **k):
+        raise OSError("disk")
+    monkeypatch.setattr(FakeArtifact, "add_file", broken)
+    assert archive.archive_run({"wandb": {"group": "g@1", "mode": "online"}}, run_dir(tmp_path), False) is None
+    assert fake_wandb["finished"]
