@@ -125,3 +125,10 @@ def test_srun_needs_a_stage_dir_and_counts_the_allocations_nodes(tmp_path, monke
         search_run.load_config(path)
     monkeypatch.setenv("SLURM_JOB_NUM_NODES", "4")
     assert search_run.load_config(path)["eval_launch"] == "srun"
+
+
+def test_a_step_gets_one_memory_setting_and_no_keys():
+    env = srun_eval.step_env({"SLURM_MEM_PER_CPU": "3500", "SLURM_MEM_PER_NODE": "200000", "ANTHROPIC_API_KEY": "k",
+                              "PATH": "/bin"})
+    assert env == {"SLURM_MEM_PER_CPU": "3500", "PATH": "/bin"}
+    assert srun_eval.step_env({"SLURM_MEM_PER_NODE": "200000"}) == {"SLURM_MEM_PER_NODE": "200000"}

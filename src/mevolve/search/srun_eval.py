@@ -9,7 +9,8 @@ the launch node. The database, every ``gen_N/`` and the logs stay on the launch 
 
 1. copy ``P`` to ``stage_dir/<gen_N>/main.py``;
 2. ``srun`` one task on a free node of the allocation, with ``2 x workers`` CPUs (one worker per core),
-   running the same evaluation on the staged program, without the API keys in its environment;
+   running the same evaluation on the staged program, without the API keys in its environment (the
+   job sets ``--mem-per-cpu``, so two steps fit on a node);
 3. copy ``metrics.json`` and ``correct.json`` back to ``R``, waiting briefly for NFS to show them;
 4. exit with the evaluation's exit code.
 
@@ -27,6 +28,7 @@ from pathlib import Path
 
 RESULT_FILES = ("metrics.json", "correct.json")
 SECRET_ENV = ("ANTHROPIC_API_KEY", "WANDB_API_KEY")
+MEM_ENV = ("SLURM_MEM_PER_CPU", "SLURM_MEM_PER_NODE", "SLURM_MEM_PER_GPU")   # srun refuses more than one
 SRUN = ["srun", "--nodes=1", "--ntasks=1", "--exact", "--job-name=mevolve-eval"]   # --exact: only its CPUs
 
 
@@ -55,6 +57,17 @@ def copy_back(stage_results: Path, results: Path, wait_s: float = 30.0) -> None:
             shutil.copy2(src, results / name)
 
 
+def step_env(environ) -> dict:
+    """The evaluation step's environment: no API keys, and one memory setting. A job submitted from
+    inside another allocation inherits that allocation's ``SLURM_MEM_PER_NODE`` beside its own
+    ``SLURM_MEM_PER_CPU``; the job's per-CPU setting is the one that lets two steps share a node."""
+    env = {k: v for k, v in environ.items() if k not in SECRET_ENV}
+    if "SLURM_MEM_PER_CPU" in env:
+        for k in MEM_ENV[1:]:
+            env.pop(k, None)
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--stage-dir", type=Path, required=True)
@@ -66,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     staged, program, results = rewrite(cmd, stage)
     stage.mkdir(parents=True, exist_ok=True)
     shutil.copy2(program, stage / "main.py")
-    env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
+    env = step_env(os.environ)
     code = subprocess.run([*SRUN, f"--cpus-per-task={args.cpus}", *staged], env=env).returncode
     copy_back(stage / "results", results)
     if all((results / name).exists() for name in RESULT_FILES):
