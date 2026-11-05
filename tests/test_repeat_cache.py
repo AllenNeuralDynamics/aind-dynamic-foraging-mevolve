@@ -47,7 +47,7 @@ def test_code_that_does_not_parse_has_no_key():
     assert shinka_eval.code_key("def f(:\n") is None
 
 
-def run(tmp_path, name, source, monkeypatch, calls, fail=False):
+def run(tmp_path, name, source, monkeypatch, calls, fail=False, extra=()):
     program = tmp_path / name / "main.py"
     program.parent.mkdir()
     program.write_text(source)
@@ -64,7 +64,7 @@ def run(tmp_path, name, source, monkeypatch, calls, fail=False):
     shinka_eval.main(["--program_path", str(program), "--results_dir", str(program.parent / "results"),
                       "--simulated_generation", str(tmp_path / "g.json.gz"),
                       "--simulated_validation", str(tmp_path / "v.json.gz"),
-                      "--workers", "1", "--repeat_cache", str(tmp_path / "cache")])
+                      "--workers", "1", "--repeat_cache", str(tmp_path / "cache"), *extra])
     return json.loads((program.parent / "results" / "metrics.json").read_text())
 
 
@@ -154,3 +154,11 @@ def test_the_run_passes_the_cache_to_the_evaluation(tmp_path, monkeypatch):
     with pytest.raises(Stop):
         search_run.build_runner({**config, "repeat_cache": False}, "TASK")
     assert "repeat_cache" not in seen["extra_cmd_args"]
+
+
+def test_a_staged_evaluation_records_the_programs_own_path(tmp_path, monkeypatch):
+    # eval_launch srun runs a staged copy that is deleted afterwards; repeats must point at the kept program
+    calls = []
+    run(tmp_path, "stage_1", TEMPLATE, monkeypatch, calls, extra=("--program_origin", "/run/gen_1/main.py"))
+    again = run(tmp_path, "gen_2", TEMPLATE, monkeypatch, calls)
+    assert again["private"]["repeat_of"] == "/run/gen_1/main.py"

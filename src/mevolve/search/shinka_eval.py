@@ -26,6 +26,7 @@ import os
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 SECRETS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "WANDB_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN")
@@ -248,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max_em", type=int, default=20)
     parser.add_argument("--n_draws", type=int, default=2048)
     parser.add_argument("--repeat_cache", type=Path, help="this run's earlier correct results, by repeat_key")
+    parser.add_argument("--program_origin", type=Path, help="the program's path in the run, when --program_path "
+                        "is a staged copy (eval_launch srun); the repeat cache records it")
     parser.add_argument("--max_params", type=int, default=8, help="the run's program limits (#60)")
     parser.add_argument("--max_latent", type=int, default=6)
     args = parser.parse_args(argv)
@@ -283,8 +286,9 @@ def main(argv: list[str] | None = None) -> int:
     if key and correct and not hit:        # failures are never stored: they are evaluated again
         try:                               # best effort: a failed write must not fail a scored program
             args.repeat_cache.mkdir(parents=True, exist_ok=True)
-            tmp = args.repeat_cache / f".{key}.{os.getpid()}"
-            tmp.write_text(json.dumps({"program": str(args.program_path), "metrics": metrics}, default=float) + "\n")
+            tmp = args.repeat_cache / f".{key}.{uuid.uuid4().hex}"     # unique on every node (the cache is shared)
+            tmp.write_text(json.dumps({"program": str(args.program_origin or args.program_path), "metrics": metrics},
+                                      default=float) + "\n")
             tmp.replace(args.repeat_cache / f"{key}.json")
         except OSError as e:
             print(f"repeat cache: could not store the result ({e})", file=sys.stderr, flush=True)

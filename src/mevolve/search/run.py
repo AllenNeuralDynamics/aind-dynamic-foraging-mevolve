@@ -46,6 +46,8 @@ DEFAULTS = {
     "max_patch_attempts": 2,    # one repair attempt after an edit that does not apply (Han, 2026-11-04): <= 2 calls
     "repeat_cache": True,       # reuse the result of a program whose code repeats an earlier one (#52)
     "max_params": 8, "max_latent": 6,   # program limits (study 40 ADR 0005); a run may set others (#60)
+    "eval_launch": "local",     # "local": evaluations on this node; "srun": on any node of the allocation (#59)
+    "stage_dir": None,          # with "srun": a directory every node reads, for staged programs and the repeat cache
     "embedding_python": None,   # a Python with torch and transformers: code embeddings, observed only (#56)
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
@@ -60,7 +62,7 @@ def load_config(path: Path) -> dict:
             raise ValueError(f"{key} has an unset variable: {value}")
         return out
 
-    for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts", "embedding_python"):
+    for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts", "embedding_python", "stage_dir"):
         if config[key]:
             config[key] = expand(key, config[key])
     config["seeds"] = [expand("seeds", s) for s in config["seeds"]]      # literature names or program files
@@ -79,7 +81,18 @@ def load_config(path: Path) -> dict:
     missing = [k for k in ("results_dir", "out_dir") + data_keys if not config[k]]
     if missing:
         raise ValueError(f"config needs {missing}")
-    if config["max_evaluation_jobs"] * config["workers"] > (os.cpu_count() or 1):
+    if config["eval_launch"] not in ("local", "srun"):
+        raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local' or 'srun'")
+    if config["eval_launch"] == "srun" and not config["stage_dir"]:
+        raise ValueError("eval_launch 'srun' needs a stage_dir every node can read")
+    cpus = os.cpu_count() or 1
+    if config["eval_launch"] == "srun":     # each evaluation is one step of 2 x workers CPUs on one node
+        nodes, step = int(os.environ.get("SLURM_JOB_NUM_NODES", "1")), 2 * config["workers"]
+        if step > cpus:
+            raise ValueError(f"an evaluation step needs {step} CPUs (2 x workers); a node has {cpus}")
+        if config["max_evaluation_jobs"] > nodes * (cpus // step):
+            raise ValueError(f"{config['max_evaluation_jobs']} evaluation steps of {step} CPUs exceed {nodes} node(s)")
+    elif config["max_evaluation_jobs"] * config["workers"] > cpus:
         raise ValueError("max_evaluation_jobs x workers exceeds this node's CPUs")
     return config
 
@@ -135,7 +148,8 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
     sim = config["simulated"]
     metrics = evaluate_program(path, config["freeze"] and Path(config["freeze"]), config["cohorts"] and Path(config["cohorts"]),
                                config["generation"], config["validation"],
-                               config["max_evaluation_jobs"] * config["workers"], config["max_em"], config["n_draws"],
+                               min(config["max_evaluation_jobs"] * config["workers"], max(1, len(os.sched_getaffinity(0)) // 2)),
+                               config["max_em"], config["n_draws"],      # seeds run here: one worker per core this task has
                                (Path(sim["generation"]), Path(sim["validation"])) if sim else None,
                                config["max_params"], config["max_latent"])
     if cache:
@@ -172,21 +186,37 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
         wandb_mode=wandb.get("mode"), wandb_notes=wandb.get("notes"), wandb_tags=["mevolve"],
         wandb_config={"mevolve": {k: v for k, v in config.items() if k != "wandb"}},
     )
+    srun = config["eval_launch"] == "srun"
+    repeat_cache = (Path(config["stage_dir"]) if srun else results_dir) / "repeat_cache"
     job = LocalJobConfig(
-        eval_program_path=str(Path(shinka_eval.__file__).resolve()), python_executable=sys.executable,
+        eval_program_path=str(Path(shinka_eval.__file__).resolve()),
+        python_executable=srun_python(results_dir, Path(config["stage_dir"]), config["workers"]) if srun else sys.executable,
         numeric_threads_per_job=1, time=config["eval_time"],
         extra_cmd_args={**({"simulated_generation": config["simulated"]["generation"],
                             "simulated_validation": config["simulated"]["validation"]} if config["simulated"] else
                            {"freeze": str(config["freeze"]), "cohorts": str(config["cohorts"]),
                             "generation": config["generation"], "validation": config["validation"]}),
                         "workers": config["workers"], "max_em": config["max_em"], "n_draws": config["n_draws"],
-                        **({"repeat_cache": str(results_dir / "repeat_cache")} if config["repeat_cache"] else {}),
+                        **({"repeat_cache": str(repeat_cache)} if config["repeat_cache"] else {}),
                         "max_params": config["max_params"], "max_latent": config["max_latent"]})
     db = DatabaseConfig(num_islands=1 + len(config["seeds"]), archive_size=config["archive_size"],
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
     runner = ShinkaEvolveRunner(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
                                 max_proposal_jobs=config["max_proposal_jobs"], max_db_workers=2)
     return runner, db
+
+
+def srun_python(results_dir: Path, stage_dir: Path, workers: int) -> str:
+    """The executable Shinka starts for each evaluation in "srun" mode: ``srun_eval`` on this node, which
+    stages the program and runs the evaluation on a free node with 2 x ``workers`` CPUs."""
+    import shlex
+
+    path = results_dir / "srun_python"
+    py = shlex.quote(sys.executable)
+    path.write_text(f"#!/bin/sh\nexec {py} -m mevolve.search.srun_eval --stage-dir {shlex.quote(str(stage_dir))} "
+                    f"--cpus {2 * workers} -- {py} \"$@\"\n")
+    path.chmod(0o755)
+    return str(path)
 
 
 def summarize(config: dict, started: float) -> dict:
