@@ -19,7 +19,9 @@ the launch node. The database, every ``gen_N/`` and the logs stay on the launch 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -68,6 +70,12 @@ def step_env(environ) -> dict:
     return env
 
 
+def _die_with_parent() -> None:
+    """In the ``srun`` child: SIGTERM when this wrapper dies, even by SIGKILL (Shinka kills an evaluation
+    past its time); ``srun`` then cancels the step, so a killed evaluation frees its node."""
+    ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)     # PR_SET_PDEATHSIG
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--stage-dir", type=Path, required=True)
@@ -77,10 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
     stage = args.stage_dir / stage_name(Path(cmd[cmd.index("--program_path") + 1]))
     staged, program, results = rewrite(cmd, stage)
+    staged += ["--program_origin", str(program)]       # the repeat cache names the kept program, not the stage
     stage.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(program, stage / "main.py")
     env = step_env(os.environ)
-    code = subprocess.run([*SRUN, f"--cpus-per-task={args.cpus}", *staged], env=env).returncode
+    code = subprocess.run([*SRUN, f"--cpus-per-task={args.cpus}", *staged], env=env,
+                          preexec_fn=_die_with_parent).returncode
     copy_back(stage / "results", results)
     if all((results / name).exists() for name in RESULT_FILES):
         shutil.rmtree(stage, ignore_errors=True)

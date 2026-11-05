@@ -112,19 +112,23 @@ def test_srun_needs_a_stage_dir_and_counts_the_allocations_nodes(tmp_path, monke
     pytest.importorskip("shinka")
     from mevolve.search import run as search_run
 
+    monkeypatch.setattr(os, "cpu_count", lambda: 112)          # an aind node, whatever runs the test
+
     base = {"results_dir": "/r", "out_dir": "/o", "freeze": "/f", "cohorts": "/c", "generation": "g",
             "validation": "v", "workers": 28, "eval_launch": "srun"}
     path = tmp_path / "c.json"
     path.write_text(json.dumps(base))
     with pytest.raises(ValueError, match="stage_dir"):
         search_run.load_config(path)
-    cpus = os.cpu_count() or 1
-    path.write_text(json.dumps({**base, "stage_dir": "/s", "max_evaluation_jobs": 2 * cpus // 28 + 2}))
-    monkeypatch.setenv("SLURM_JOB_NUM_NODES", "1")
-    with pytest.raises(ValueError, match="1 node"):
+    path.write_text(json.dumps({**base, "stage_dir": "/s", "max_evaluation_jobs": 5}))   # 2 steps of 56 per node
+    monkeypatch.setenv("SLURM_JOB_NUM_NODES", "2")
+    with pytest.raises(ValueError, match="5 evaluation steps of 56 CPUs exceed 2 node"):
         search_run.load_config(path)
     monkeypatch.setenv("SLURM_JOB_NUM_NODES", "4")
     assert search_run.load_config(path)["eval_launch"] == "srun"
+    path.write_text(json.dumps({**base, "stage_dir": "/s", "workers": 80, "max_evaluation_jobs": 1}))
+    with pytest.raises(ValueError, match="needs 160 CPUs"):                  # no node holds one such step
+        search_run.load_config(path)
 
 
 def test_a_step_gets_one_memory_setting_and_no_keys():
@@ -144,3 +148,39 @@ def test_results_are_copied_without_their_mode(tmp_path):
     srun_eval.copy_back(src, tmp_path / "results", wait_s=0)
     for name in srun_eval.RESULT_FILES:
         assert (tmp_path / "results" / name).stat().st_mode & 0o600 == 0o600
+
+
+def test_a_killed_wrapper_stops_its_step(cluster):
+    # Shinka kills an evaluation past its time with SIGKILL; the srun child must not keep the node busy
+    import signal
+    import subprocess
+    import time
+
+    tmp_path, gen = cluster
+    executable(tmp_path / "bin" / "srun", '#!/bin/sh\necho $$ > "$FAKE_SRUN_LOG.pid"\nexec sleep 120\n')
+    cmd = [sys.executable, "-m", "mevolve.search.srun_eval", "--stage-dir", str(tmp_path / "stage"), "--cpus", "56", "--",
+           sys.executable, str(tmp_path / "eval.py"), "--program_path", str(gen / "main.py"),
+           "--results_dir", str(gen / "results"), "--exit", "0"]
+    wrapper = subprocess.Popen(cmd, env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+    pid_file = tmp_path / "srun.pid"
+    for _ in range(100):
+        if pid_file.exists() and pid_file.read_text().strip():
+            break
+        time.sleep(0.1)
+    step = int(pid_file.read_text())
+    wrapper.send_signal(signal.SIGKILL)
+    wrapper.wait()
+    for _ in range(50):
+        try:
+            os.kill(step, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    os.kill(step, signal.SIGKILL)
+    pytest.fail("the srun child outlived its killed wrapper")
+
+
+def test_the_step_is_told_the_programs_own_path(cluster):
+    tmp_path, gen = cluster
+    run(tmp_path, gen)
+    assert f"--program_origin {gen / 'main.py'}" in (tmp_path / "srun.args").read_text()

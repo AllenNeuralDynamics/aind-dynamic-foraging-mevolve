@@ -85,9 +85,15 @@ def load_config(path: Path) -> dict:
         raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local' or 'srun'")
     if config["eval_launch"] == "srun" and not config["stage_dir"]:
         raise ValueError("eval_launch 'srun' needs a stage_dir every node can read")
-    nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", "1")) if config["eval_launch"] == "srun" else 1
-    if config["max_evaluation_jobs"] * config["workers"] > nodes * (os.cpu_count() or 1):
-        raise ValueError(f"max_evaluation_jobs x workers exceeds the CPUs of {nodes} node(s)")
+    cpus = os.cpu_count() or 1
+    if config["eval_launch"] == "srun":     # each evaluation is one step of 2 x workers CPUs on one node
+        nodes, step = int(os.environ.get("SLURM_JOB_NUM_NODES", "1")), 2 * config["workers"]
+        if step > cpus:
+            raise ValueError(f"an evaluation step needs {step} CPUs (2 x workers); a node has {cpus}")
+        if config["max_evaluation_jobs"] > nodes * (cpus // step):
+            raise ValueError(f"{config['max_evaluation_jobs']} evaluation steps of {step} CPUs exceed {nodes} node(s)")
+    elif config["max_evaluation_jobs"] * config["workers"] > cpus:
+        raise ValueError("max_evaluation_jobs x workers exceeds this node's CPUs")
     return config
 
 
