@@ -90,7 +90,7 @@ def test_a_failure_is_not_stored(tmp_path, monkeypatch):
 def test_a_repeat_still_passes_the_static_checks(tmp_path, monkeypatch):
     calls = []
     run(tmp_path, "gen_1", TEMPLATE, monkeypatch, calls)
-    monkeypatch.setattr("mevolve.search.checks.check_source", lambda s: (_ for _ in ()).throw(
+    monkeypatch.setattr("mevolve.search.checks.check_source", lambda s, *limits: (_ for _ in ()).throw(
         __import__("mevolve.search.checks", fromlist=["ProgramRejected"]).ProgramRejected("forbidden")))
     program = tmp_path / "gen_2" / "main.py"
     out = run(tmp_path, "gen_2", TEMPLATE, monkeypatch, calls)

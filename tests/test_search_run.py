@@ -89,3 +89,43 @@ def test_one_repair_attempt_reaches_shinka(tmp_path, monkeypatch):
     with pytest.raises(Stop):
         run.build_runner(config, "TASK")
     assert seen["max_patch_attempts"] == 2 and seen["max_patch_resamples"] == 1
+
+
+def test_the_limits_reach_the_evaluation(tmp_path, monkeypatch):
+    import shinka.launch
+
+    from mevolve.search import run
+
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def record(**kw):
+        seen.update(kw)
+        raise Stop
+    monkeypatch.setattr(shinka.launch, "LocalJobConfig", record)
+    config = {**run.DEFAULTS, "results_dir": str(tmp_path), "freeze": "/f", "cohorts": "/c", "generation": "g",
+              "validation": "v", "max_params": 12, "max_latent": 8}
+    with pytest.raises(Stop):
+        run.build_runner(config, "TASK")
+    assert seen["extra_cmd_args"]["max_params"] == 12 and seen["extra_cmd_args"]["max_latent"] == 8
+    assert run.DEFAULTS["max_params"] == 8 and run.DEFAULTS["max_latent"] == 6
+
+
+def test_a_cached_seed_is_held_to_the_runs_limits(tmp_path, monkeypatch):
+    from mevolve.search import run, shinka_eval
+    from mevolve.search.checks import ProgramRejected
+
+    for k in ("generation", "validation"):
+        (tmp_path / f"{k}.json.gz").write_bytes(k.encode())
+    monkeypatch.setattr(shinka_eval, "evaluate_program", lambda *a, **k: {"combined_score": 70.0})
+    nine = ('import jax.numpy as jnp\nPARAMS = {' + ", ".join(f'"p{i}": (0.0, 1.0)' for i in range(9)) + '}\n'
+            'N_LATENT = 1\nLATENT_NAMES = ("x",)\ndef init_latents(p, session): return jnp.zeros(1)\n'
+            'def predict(latents, p): return jnp.array([0.0, p["p0"]])\ndef update(latents, choice, reward, p): return latents\n')
+    config = {**run.DEFAULTS, "results_dir": str(tmp_path / "r"), "seed_cache": str(tmp_path / "cache"), "max_params": 12,
+              "simulated": {k: str(tmp_path / f"{k}.json.gz") for k in ("generation", "validation")}}
+    assert run.seed_metrics("big", nine, config) == {"combined_score": 70.0}            # scored and cached at 12
+    assert run.seed_metrics("big", nine, config) == {"combined_score": 70.0}            # a hit at 12
+    with pytest.raises(ProgramRejected, match="at most 8"):
+        run.seed_metrics("big", nine, {**config, "max_params": 8})                       # the same hit at 8
