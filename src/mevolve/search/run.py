@@ -148,8 +148,8 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
     sim = config["simulated"]
     metrics = evaluate_program(path, config["freeze"] and Path(config["freeze"]), config["cohorts"] and Path(config["cohorts"]),
                                config["generation"], config["validation"],
-                               min(config["max_evaluation_jobs"] * config["workers"], (os.cpu_count() or 2) // 2),
-                               config["max_em"], config["n_draws"],      # seeds run here: one worker per core
+                               min(config["max_evaluation_jobs"] * config["workers"], max(1, len(os.sched_getaffinity(0)) // 2)),
+                               config["max_em"], config["n_draws"],      # seeds run here: one worker per core this task has
                                (Path(sim["generation"]), Path(sim["validation"])) if sim else None,
                                config["max_params"], config["max_latent"])
     if cache:
