@@ -274,9 +274,9 @@ def main(argv: list[str] | None = None) -> int:
             install_fake_llm(results_dir / "ledger.jsonl")
         seeds.install_island_patch()
         from shinka.database import DatabaseConfig
-        seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
         run_failed = True
         try:
+            seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
             runner, _ = build_runner(config, task_message, embedding_model)
             if not args.dry:
                 runner.run()
