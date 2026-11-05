@@ -2,12 +2,16 @@
 
     python shinka_eval.py --program_path <gen_N/main.py> --results_dir <gen_N/results> \\
         --freeze <dir> --cohorts <cohorts.json> --generation <name> --validation <name> \\
-        --workers 16 [--max_em 20] [--n_draws 2048]
+        --workers 16 [--max_em 20] [--n_draws 2048] [--repeat_cache <dir>]
 
 It writes Shinka's two files: ``correct.json`` (``correct``, ``error``) and ``metrics.json``
 (``combined_score``, ``public``, ``private``, ``text_feedback``). ``combined_score`` is the
 program's score on the validation subjects (``evaluate.program_score`` of its 2-level records)
 x100, which ranks programs; the feedback comes from the generation subjects (study 40 ADR 0003).
+
+With ``--repeat_cache``, a program whose code repeats an earlier correct one (the same syntax tree,
+comments, formatting and docstrings aside) on the same data and settings reuses that result instead
+of being refitted: the evaluator is deterministic, so a refit would give the same metrics.
 
 Shinka runs this file as a script, so it imports ``mevolve`` absolutely. A candidate is code
 Claude wrote. Before any of it runs, the API keys leave this process's
@@ -159,6 +163,43 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
     }
 
 
+def code_key(source: str) -> str | None:
+    """sha256 of the program's syntax tree without comments, formatting or docstrings (bare string
+    statements): equal keys mean the same code. Names, constants and statements all count. None if
+    the source does not parse."""
+    import ast
+    import hashlib
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if isinstance(body, list):
+            node.body = [s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
+                                                 and isinstance(s.value.value, str))] or [ast.Pass()]
+    return hashlib.sha256(ast.dump(tree).encode()).hexdigest()
+
+
+def repeat_key(source: str, simulated: tuple[Path, Path] | None, freeze_dir: Path | None, cohorts_path: Path | None,
+               generation: str | None, validation: str | None, workers: int, max_em: int, n_draws: int) -> str | None:
+    """The repeat cache's key: the code (``code_key``), the data, the fit settings and the evaluator's
+    source, as for the seed cache. None if the code does not parse."""
+    import hashlib
+
+    from mevolve.search.run import evaluator_digest
+
+    code = code_key(source)
+    if code is None:
+        return None
+    if simulated:
+        data = [hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in simulated]
+    else:
+        data = [Path(cohorts_path).read_text(), generation, validation, (Path(freeze_dir) / "manifest.json").read_text()]
+    return hashlib.sha256(json.dumps([code, *data, workers, max_em, n_draws, evaluator_digest()]).encode()).hexdigest()
+
+
 def write_results(results_dir: Path, metrics: dict | None, error: str | None) -> bool:
     """Shinka's ``correct.json`` and ``metrics.json``; a missing or non-finite score is incorrect."""
     results_dir = Path(results_dir)
@@ -190,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers", type=int, required=True)
     parser.add_argument("--max_em", type=int, default=20)
     parser.add_argument("--n_draws", type=int, default=2048)
+    parser.add_argument("--repeat_cache", type=Path, help="this run's earlier correct results, by repeat_key")
     args = parser.parse_args(argv)
     if bool(args.simulated_generation) != bool(args.simulated_validation):
         parser.error("give both --simulated_generation and --simulated_validation, or neither")
@@ -198,18 +240,33 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("the --simulated_ files replace --freeze, --cohorts, --generation and --validation")
     if not simulated and not all((args.freeze, args.cohorts, args.generation, args.validation)):
         parser.error("give --freeze, --cohorts, --generation and --validation, or the two --simulated_ files")
-    from mevolve.search.checks import ProgramRejected
+    from mevolve.search.checks import ProgramRejected, check_source
 
-    metrics, error = None, None
+    metrics, error, hit, key = None, None, None, None
+    if args.repeat_cache:
+        source = Path(args.program_path).read_text()
+        key = repeat_key(source, simulated, args.freeze, args.cohorts, args.generation, args.validation,
+                         args.workers, args.max_em, args.n_draws)
+        if key and (args.repeat_cache / f"{key}.json").exists():
+            hit = json.loads((args.repeat_cache / f"{key}.json").read_text())
     try:
-        metrics = evaluate_program(args.program_path, args.freeze, args.cohorts, args.generation,
-                                   args.validation, args.workers, args.max_em, args.n_draws, simulated)
+        if hit:                 # the same code was scored: its checks again (on this source), then its metrics
+            check_source(source)
+            metrics = {**hit["metrics"], "private": {**hit["metrics"]["private"], "repeat_of": hit["program"]}}
+        else:
+            metrics = evaluate_program(args.program_path, args.freeze, args.cohorts, args.generation,
+                                       args.validation, args.workers, args.max_em, args.n_draws, simulated)
     except ProgramRejected as e:
         error = f"rejected by the static checks: {e}"
     except Exception as e:  # noqa: BLE001 - any failure of a candidate is a failed candidate
         error = f"{type(e).__name__}: {e}"
         traceback.print_exc()
     correct = write_results(args.results_dir, metrics, error)
+    if key and correct and not hit:        # failures are never stored: they are evaluated again
+        args.repeat_cache.mkdir(parents=True, exist_ok=True)
+        tmp = args.repeat_cache / f".{key}.{os.getpid()}"
+        tmp.write_text(json.dumps({"program": str(args.program_path), "metrics": metrics}, default=float) + "\n")
+        tmp.replace(args.repeat_cache / f"{key}.json")
     print(json.dumps({"correct": correct, "error": error,
                       "combined_score": (metrics or {}).get("combined_score")}), flush=True)
     return 0
