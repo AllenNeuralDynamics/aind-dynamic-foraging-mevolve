@@ -119,7 +119,7 @@ def check_shapes(prog) -> None:
 
 def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: Path | None, generation: str | None,
                      validation: str | None, workers: int, max_em: int = 20, n_draws: int = 2048,
-                     simulated: tuple[Path, Path] | None = None) -> dict:
+                     simulated: tuple[Path, Path] | None = None, max_params: int = 8, max_latent: int = 6) -> dict:
     """Fit and score one program on the generation and validation subjects; returns Shinka's
     metrics dict. Raises ``checks.ProgramRejected`` for a program that fails the static checks.
     ``simulated`` (generation file, validation file) replaces the freeze and cohorts with subjects
@@ -129,7 +129,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
     from mevolve.search.checks import check_source
 
     t0 = time.time()
-    shape = check_source(Path(program_path).read_text())
+    shape = check_source(Path(program_path).read_text(), max_params, max_latent)
     prog = program.load(program_path)       # executes the candidate: only after the checks
     if (len(prog.params), prog.n_latent) != (shape["n_params"], shape["n_latent"]):
         from mevolve.search.checks import ProgramRejected
@@ -248,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max_em", type=int, default=20)
     parser.add_argument("--n_draws", type=int, default=2048)
     parser.add_argument("--repeat_cache", type=Path, help="this run's earlier correct results, by repeat_key")
+    parser.add_argument("--max_params", type=int, default=8, help="the run's program limits (#60)")
+    parser.add_argument("--max_latent", type=int, default=6)
     args = parser.parse_args(argv)
     if bool(args.simulated_generation) != bool(args.simulated_validation):
         parser.error("give both --simulated_generation and --simulated_validation, or neither")
@@ -266,11 +268,12 @@ def main(argv: list[str] | None = None) -> int:
                              args.workers, args.max_em, args.n_draws)
             hit = _cached(args.repeat_cache / f"{key}.json") if key else None
         if hit:                 # the same code was scored: its checks again (on this source), then its metrics
-            check_source(source)
+            check_source(source, args.max_params, args.max_latent)
             metrics = {**hit["metrics"], "private": {**hit["metrics"]["private"], "repeat_of": hit["program"]}}
         else:
             metrics = evaluate_program(args.program_path, args.freeze, args.cohorts, args.generation,
-                                       args.validation, args.workers, args.max_em, args.n_draws, simulated)
+                                       args.validation, args.workers, args.max_em, args.n_draws, simulated,
+                                       args.max_params, args.max_latent)
     except ProgramRejected as e:
         error = f"rejected by the static checks: {e}"
     except Exception as e:  # noqa: BLE001 - any failure of a candidate is a failed candidate

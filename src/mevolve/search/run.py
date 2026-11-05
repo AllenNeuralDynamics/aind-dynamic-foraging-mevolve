@@ -45,6 +45,7 @@ DEFAULTS = {
     "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: no resampling, so not up to 9 calls
     "max_patch_attempts": 2,    # one repair attempt after an edit that does not apply (Han, 2026-11-04): <= 2 calls
     "repeat_cache": True,       # reuse the result of a program whose code repeats an earlier one (#52)
+    "max_params": 8, "max_latent": 6,   # program limits (study 40 ADR 0005); a run may set others (#60)
     "embedding_python": None,   # a Python with torch and transformers: code embeddings, observed only (#56)
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
@@ -132,7 +133,8 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
     metrics = evaluate_program(path, config["freeze"] and Path(config["freeze"]), config["cohorts"] and Path(config["cohorts"]),
                                config["generation"], config["validation"],
                                config["max_evaluation_jobs"] * config["workers"], config["max_em"], config["n_draws"],
-                               (Path(sim["generation"]), Path(sim["validation"])) if sim else None)
+                               (Path(sim["generation"]), Path(sim["validation"])) if sim else None,
+                               config["max_params"], config["max_latent"])
     if cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(metrics, default=float) + "\n")
@@ -175,7 +177,8 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
                            {"freeze": str(config["freeze"]), "cohorts": str(config["cohorts"]),
                             "generation": config["generation"], "validation": config["validation"]}),
                         "workers": config["workers"], "max_em": config["max_em"], "n_draws": config["n_draws"],
-                        **({"repeat_cache": str(results_dir / "repeat_cache")} if config["repeat_cache"] else {})})
+                        **({"repeat_cache": str(results_dir / "repeat_cache")} if config["repeat_cache"] else {}),
+                        "max_params": config["max_params"], "max_latent": config["max_latent"]})
     db = DatabaseConfig(num_islands=1 + len(config["seeds"]), archive_size=config["archive_size"],
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
     runner = ShinkaEvolveRunner(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
@@ -260,7 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     from . import claude, prompt, seeds
 
     write_pricing_snapshot(results_dir)
-    task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]))
+    task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]),
+                                       config["max_params"], config["max_latent"])
     with embedding_server(config["embedding_python"]) as embedding_model:     # first: a bad setup fails before any fit
         placed = []
         for island, seed in enumerate(config["seeds"], start=1):

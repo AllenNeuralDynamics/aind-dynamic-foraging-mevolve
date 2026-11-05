@@ -119,3 +119,12 @@ def test_feedback_after_a_failed_2_level_fit_omits_its_details():
     failed = {"score": 0.73, "two_level_failed": True}
     text = shinka_eval.feedback({"score": 0.73, "two_level_failed": False}, failed, [], {"bias": (-5.0, 5.0)})
     assert "omitted" in text and "by stage and task (score" not in text and "Fitted parameters" not in text
+
+
+def test_the_prompt_states_the_runs_limits():
+    from mevolve.search import prompt
+
+    assert prompt.task_message(with_library=False, max_params=8, max_latent=6) == prompt.TASK
+    text = prompt.task_message(with_library=False, max_params=12, max_latent=8)
+    assert "At most 12 parameters and 8 latent variables" in text and "at most 8 parameters" not in text.lower()
+    assert "; at most 12" in text and "# at most 8" in text

@@ -102,5 +102,15 @@ def library(exclude: tuple[str, ...] = ()) -> str:
     return "".join(parts)
 
 
-def task_message(with_library: bool = True, exclude: tuple[str, ...] = ()) -> str:
-    return TASK + (library(tuple(exclude)) if with_library else "")
+LIMIT_TEXT = ("# name: (low, high); at most {p}", "# at most {l}", "At most {p} parameters and {l} latent variables")
+
+
+def task_message(with_library: bool = True, exclude: tuple[str, ...] = (), max_params: int = 8,
+                 max_latent: int = 6) -> str:
+    """The task, with the run's program limits (``checks.check_source``), then the library."""
+    task = TASK
+    for text in LIMIT_TEXT:
+        old = text.format(p=8, l=6)
+        assert task.count(old) == 1, old
+        task = task.replace(old, text.format(p=max_params, l=max_latent))
+    return task + (library(tuple(exclude)) if with_library else "")

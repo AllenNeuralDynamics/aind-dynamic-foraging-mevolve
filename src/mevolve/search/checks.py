@@ -5,8 +5,8 @@ until it passes: imports only from jax and math, no file, process or introspecti
 dunder names, no private attributes (``__builtins__["open"]`` or ``license._Printer__filenames`` would
 otherwise reach the real builtins or the disk), no frame attributes or generators (``gi_frame.f_builtins``),
 and none of jax's file, callback or debugging functions (``jnp.save``, ``jax.pure_callback``). The interface
-limits (at most 8 parameters, at most 6 latent variables) are read from the parsed literals too, so an
-oversized program is rejected before fitting.
+limits (by default at most 8 parameters and 6 latent variables; a run can set others, #60) are read
+from the parsed literals too, so an oversized program is rejected before fitting.
 
 These checks keep a cooperative proposer inside the program interface; they are not a sandbox against
 code written to escape. The evaluation script also removes API keys from the environment before any
@@ -40,7 +40,7 @@ def _module_allowed(name: str) -> bool:
     return any(name == root or name.startswith(root + ".") for root in ALLOWED_IMPORTS)
 
 
-def check_source(source: str) -> dict:
+def check_source(source: str, max_params: int = MAX_PARAMS, max_latent: int = MAX_LATENT) -> dict:
     """Parse and check ``source``; returns ``{"n_params", "n_latent"}`` or raises
     ``ProgramRejected``."""
     try:
@@ -86,10 +86,10 @@ def check_source(source: str) -> dict:
         if not (isinstance(v, (tuple, list)) and len(v) == 2 and all(isinstance(x, (int, float)) for x in v)
                 and v[0] < v[1]):
             raise ProgramRejected(f"PARAMS[{k!r}] must be (low, high) numbers with low < high")
-    if len(params) > MAX_PARAMS:
-        raise ProgramRejected(f"{len(params)} parameters; at most {MAX_PARAMS} are allowed")
-    if not isinstance(n_latent, int) or not 0 < n_latent <= MAX_LATENT:
-        raise ProgramRejected(f"N_LATENT is {n_latent!r}; it must be 1 to {MAX_LATENT}")
+    if len(params) > max_params:
+        raise ProgramRejected(f"{len(params)} parameters; at most {max_params} are allowed")
+    if not isinstance(n_latent, int) or not 0 < n_latent <= max_latent:
+        raise ProgramRejected(f"N_LATENT is {n_latent!r}; it must be 1 to {max_latent}")
     if len(names) != n_latent:
         raise ProgramRejected(f"N_LATENT is {n_latent} but LATENT_NAMES has {len(names)} names")
     for fn in ("init_latents", "predict", "update"):

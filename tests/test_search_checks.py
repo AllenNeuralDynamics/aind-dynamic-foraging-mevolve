@@ -72,3 +72,14 @@ def test_an_aliased_jax_module_cannot_reach_file_io():
     source = GOOD.replace("import jax.numpy as jnp", "import jax.numpy as jnp\nimport jax.numpy as J")
     with pytest.raises(ProgramRejected, match="'save'"):
         check_source(source.replace("return latents", "return J.save('x', latents)"))
+
+
+def test_the_limits_come_from_the_run():
+    nine = GOOD.replace('{"bias": (-5.0, 5.0)}', "{" + ", ".join(f'"p{i}": (0.0, 1.0)' for i in range(9)) + "}")
+    with pytest.raises(ProgramRejected, match="9 parameters; at most 8"):
+        check_source(nine)
+    assert check_source(nine, max_params=12)["n_params"] == 9
+    seven = GOOD.replace("N_LATENT = 1", "N_LATENT = 7").replace('("last_choice",)', str(tuple(f"z{i}" for i in range(7))))
+    with pytest.raises(ProgramRejected, match="1 to 6"):
+        check_source(seven)
+    assert check_source(seven, max_latent=8)["n_latent"] == 7

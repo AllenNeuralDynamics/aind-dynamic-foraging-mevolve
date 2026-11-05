@@ -89,3 +89,25 @@ def test_one_repair_attempt_reaches_shinka(tmp_path, monkeypatch):
     with pytest.raises(Stop):
         run.build_runner(config, "TASK")
     assert seen["max_patch_attempts"] == 2 and seen["max_patch_resamples"] == 1
+
+
+def test_the_limits_reach_the_evaluation(tmp_path, monkeypatch):
+    import shinka.launch
+
+    from mevolve.search import run
+
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def record(**kw):
+        seen.update(kw)
+        raise Stop
+    monkeypatch.setattr(shinka.launch, "LocalJobConfig", record)
+    config = {**run.DEFAULTS, "results_dir": str(tmp_path), "freeze": "/f", "cohorts": "/c", "generation": "g",
+              "validation": "v", "max_params": 12, "max_latent": 8}
+    with pytest.raises(Stop):
+        run.build_runner(config, "TASK")
+    assert seen["extra_cmd_args"]["max_params"] == 12 and seen["extra_cmd_args"]["max_latent"] == 8
+    assert run.DEFAULTS["max_params"] == 8 and run.DEFAULTS["max_latent"] == 6
