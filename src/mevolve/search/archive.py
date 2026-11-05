@@ -7,7 +7,7 @@ without ``wandb/`` and SQLite's ``-shm``, as one ``mevolve-run`` artifact named 
 logged from an ``archive`` run in that group, and writes ``archive.json`` beside the files: the
 artifact's name and digest (the immutable key) and the sha256 of the files a freeze reads.
 
-``run.main`` archives the search's ``out_dir`` at the end of every run with W&B online. A study
+``run.main`` archives the search's ``out_dir`` at the end of every run with W&B online, failed ones too. A study
 that adds steps after the search (a held-out check) archives the whole launch directory again,
 which logs a new version of the same artifact:
 
@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -69,12 +70,13 @@ def archive_run(config: dict, out_dir: Path | None, dry: bool) -> dict | None:
     wandb_cfg = config["wandb"]
     if dry or not out_dir or not wandb_cfg or wandb_cfg.get("mode") in ("offline", "disabled"):
         return None
+    group, entity, project = wandb_cfg["group"], wandb_cfg.get("entity", WANDB_ENTITY), wandb_cfg.get("project", WANDB_PROJECT)
     try:
-        return archive(Path(out_dir), wandb_cfg["group"], wandb_cfg.get("entity", WANDB_ENTITY),
-                       wandb_cfg.get("project", WANDB_PROJECT))
+        return archive(Path(out_dir), group, entity, project)
     except Exception as e:  # noqa: BLE001 - the archive must never cost the run its outputs
-        print(f"archive of {out_dir} failed ({type(e).__name__}: {e}); retry with "
-              f"python -m mevolve.search.archive {out_dir} --group {wandb_cfg['group']}", file=sys.stderr, flush=True)
+        retry = shlex.join(["python", "-m", "mevolve.search.archive", str(out_dir), "--group", group,
+                            "--entity", entity, "--project", project])
+        print(f"archive of {out_dir} failed ({type(e).__name__}: {e}); retry with {retry}", file=sys.stderr, flush=True)
         return None
 
 

@@ -278,11 +278,16 @@ def main(argv: list[str] | None = None) -> int:
               flush=True)
         run_failed = False
     finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
-        if config["out_dir"]:
-            keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
-    from .archive import archive_run
-    archive_run(config, config["out_dir"] and Path(config["out_dir"]), args.dry)     # a W&B artifact (#54)
+        end_of_run(config, results_dir, run_failed, args.dry)
     return 0
+
+
+def end_of_run(config: dict, results_dir: Path, run_failed: bool, dry: bool) -> None:
+    """Copy the results to ``out_dir`` and archive them as a W&B artifact (#54), after a failed run too."""
+    if config["out_dir"]:
+        keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
+        from .archive import archive_run
+        archive_run(config, Path(config["out_dir"]), dry)
 
 
 def keep_outputs(results_dir: Path, out_dir: Path, run_failed: bool) -> None:

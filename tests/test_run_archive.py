@@ -75,10 +75,23 @@ def test_a_failed_upload_warns_and_keeps_the_run(tmp_path, monkeypatch, capsys):
     def broken(**kw):
         raise ConnectionError("no network")
     monkeypatch.setitem(sys.modules, "wandb", types.SimpleNamespace(init=broken, Artifact=FakeArtifact))
-    assert archive.archive_run({"wandb": {"group": "g@1", "mode": "online"}}, run_dir(tmp_path), False) is None
-    assert "python -m mevolve.search.archive" in capsys.readouterr().err
+    config = {"wandb": {"group": "g@1", "mode": "online", "entity": "E", "project": "my project"}}
+    assert archive.archive_run(config, run_dir(tmp_path), False) is None
+    err = capsys.readouterr().err       # the retry reproduces the upload: same destination, quoted
+    assert f"python -m mevolve.search.archive {tmp_path}/search --group g@1 --entity E --project 'my project'" in err
 
 
 def test_an_online_run_is_archived_under_its_group(tmp_path, fake_wandb):
     record = archive.archive_run({"wandb": {"group": "g@1", "mode": "online", "project": "p"}}, run_dir(tmp_path), False)
     assert record["artifact"] == "NeuralDynamics/p/run-g-1:v0"
+
+
+def test_a_failed_search_is_kept_and_archived(tmp_path, fake_wandb):
+    pytest.importorskip("shinka")
+    from mevolve.search import run
+
+    results = run_dir(tmp_path)
+    config = {"out_dir": str(tmp_path / "out"), "wandb": {"group": "g@1", "mode": "online"}}
+    run.end_of_run(config, results, run_failed=True, dry=False)
+    assert (tmp_path / "out" / "ledger.jsonl").exists() and fake_wandb["logged"]
+    assert (tmp_path / "out" / "archive.json").exists()
