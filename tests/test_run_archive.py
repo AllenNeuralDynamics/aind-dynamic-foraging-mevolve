@@ -120,7 +120,8 @@ def test_a_missing_directory_is_never_uploaded(tmp_path, fake_wandb):
     assert "init" not in fake_wandb
 
 
-def test_a_failed_copy_archives_the_complete_original(tmp_path, fake_wandb, monkeypatch):
+@pytest.mark.parametrize("run_failed", [True, False])
+def test_a_failed_copy_archives_the_complete_original(tmp_path, fake_wandb, monkeypatch, run_failed):
     pytest.importorskip("shinka")
     import shutil
 
@@ -133,6 +134,10 @@ def test_a_failed_copy_archives_the_complete_original(tmp_path, fake_wandb, monk
         (tmp_path / "out" / "ledger.jsonl").write_text("x")
         raise OSError("No space left on device")
     monkeypatch.setattr(shutil, "copytree", partial)
-    run.end_of_run({"out_dir": str(tmp_path / "out"), "wandb": {"group": "g@1", "mode": "online"}}, results,
-                   run_failed=True, dry=False)
+    config = {"out_dir": str(tmp_path / "out"), "wandb": {"group": "g@1", "mode": "online"}}
+    if run_failed:
+        run.end_of_run(config, results, run_failed=True, dry=False)       # the run's own error is the one reported
+    else:
+        with pytest.raises(OSError, match="No space"):                     # a good run fails on its lost copy
+            run.end_of_run(config, results, run_failed=False, dry=False)
     assert "programs.sqlite" in fake_wandb["logged"][0].files and (results / "archive.json").exists()

@@ -285,8 +285,12 @@ def main(argv: list[str] | None = None) -> int:
 def end_of_run(config: dict, results_dir: Path, run_failed: bool, dry: bool) -> None:
     """Copy the results to ``out_dir`` and archive them as a W&B artifact (#54), after a failed run too."""
     if config["out_dir"]:
-        kept = keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
         from .archive import archive_run
+        try:
+            kept = keep_outputs(results_dir, Path(config["out_dir"]), run_failed)
+        except OSError:     # a good run whose copy failed: archive the original before the job fails
+            archive_run(config, results_dir, dry)
+            raise
         archive_run(config, Path(config["out_dir"]) if kept else results_dir, dry)     # a partial copy: the original
 
 
