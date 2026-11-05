@@ -164,8 +164,10 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
 
 
 def code_key(source: str) -> str | None:
-    """sha256 of the program's syntax tree without comments, formatting or docstrings (bare string
-    statements): equal keys mean the same code. Names, constants and statements all count. None if
+    """sha256 of the program's syntax tree without comments, formatting, or bare string statements in
+    the module's and functions' bodies (their docstrings): equal keys mean the same code. Names,
+    constants and statements all count. A class body keeps its strings: a metaclass can read a class
+    docstring, while ``check_source`` rejects every way to read a module's or function's. None if
     the source does not parse."""
     import ast
     import hashlib
@@ -175,9 +177,8 @@ def code_key(source: str) -> str | None:
     except SyntaxError:
         return None
     for node in ast.walk(tree):
-        body = getattr(node, "body", None)
-        if isinstance(body, list):
-            node.body = [s for s in body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
+        if isinstance(node, (ast.Module, ast.FunctionDef)):
+            node.body = [s for s in node.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
                                                  and isinstance(s.value.value, str))] or [ast.Pass()]
     return hashlib.sha256(ast.dump(tree).encode()).hexdigest()
 
@@ -207,6 +208,7 @@ def _cached(entry: Path) -> dict | None:
         m = hit["metrics"]
         score = m["combined_score"]
         if (isinstance(hit["program"], str) and isinstance(m["private"], dict) and isinstance(m["public"], dict)
+                and isinstance(m["text_feedback"], str)
                 and isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score)):
             return hit
     except (OSError, ValueError, KeyError, TypeError):

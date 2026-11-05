@@ -37,6 +37,12 @@ def test_any_change_to_the_code_changes_the_key(edit):
     assert shinka_eval.code_key(edit(BASE)) != shinka_eval.code_key(BASE)
 
 
+def test_a_class_docstring_counts_in_the_key():
+    # a metaclass can read a class docstring, e.g. return float(namespace["__doc__"])
+    one = BASE + 'class K:\n    """1.0"""\n'
+    assert shinka_eval.code_key(one) != shinka_eval.code_key(one.replace('"""1.0"""', '"""2.0"""'))
+
+
 def test_code_that_does_not_parse_has_no_key():
     assert shinka_eval.code_key("def f(:\n") is None
 
@@ -93,8 +99,9 @@ def test_a_repeat_still_passes_the_static_checks(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("corrupt", ["{not json", '{"program": "p", "metrics": {"combined_score": "72.5", '
-                                     '"public": {}, "private": {}}}', '{"program": "p", "metrics": '
-                                     '{"combined_score": NaN, "public": {}, "private": {}}}'])
+                                     '"public": {}, "private": {}, "text_feedback": ""}}', '{"program": "p", "metrics": '
+                                     '{"combined_score": NaN, "public": {}, "private": {}, "text_feedback": ""}}',
+                                     '{"program": "p", "metrics": {"combined_score": 72.5, "public": {}, "private": {}}}'])
 def test_an_unreadable_or_unscored_cache_entry_is_a_miss(tmp_path, monkeypatch, corrupt):
     calls = []
     run(tmp_path, "gen_1", TEMPLATE, monkeypatch, calls)
