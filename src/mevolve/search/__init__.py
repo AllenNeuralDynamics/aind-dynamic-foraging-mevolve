@@ -6,4 +6,6 @@
     shinka_eval  the evaluation script Shinka runs for each candidate
     seeds        seed programs, and their placement on chosen islands
     run          the launch: configs, pricing snapshot, seeds, then Shinka's runner
+    archive      the run directory as a W&B artifact, at the end of every run
+    embed_server code embeddings from a local model, for the viewer; they never steer the search
 """

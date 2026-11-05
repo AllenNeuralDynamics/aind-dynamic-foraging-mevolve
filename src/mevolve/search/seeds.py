@@ -88,14 +88,16 @@ def install_island_patch() -> None:
     Strategy.assign_island = assign_island
 
 
-def place(results_dir: Path, db_config, seeds: list[dict]) -> list[str]:
+def place(results_dir: Path, db_config, seeds: list[dict], embedding_model: str | None = None) -> list[str]:
     """Write evaluated seeds into ``<results_dir>/programs.sqlite`` before the runner starts.
 
     Each seed is ``{"name", "code", "island", "metrics"}``, where ``metrics`` is what
     ``shinka_eval`` wrote. All are generation 0, so the runner does not treat the database as a
-    resumed run. Returns the program ids.
+    resumed run. With ``embedding_model`` each seed gets its code embedding, as the runner gives
+    every other program (the first 10,000 characters). Returns the program ids.
     """
     from shinka.database.dbase import Program, ProgramDatabase
+    from shinka.embed import EmbeddingClient
 
     install_island_patch()
     islands = [s["island"] for s in seeds]
@@ -107,15 +109,19 @@ def place(results_dir: Path, db_config, seeds: list[dict]) -> list[str]:
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     db_config.db_path = str(db_path)
     db = ProgramDatabase(db_config, embedding_model=None)
+    embedder = EmbeddingClient(embedding_model) if embedding_model else None
     ids = []
     try:
         for s in seeds:
             m = s["metrics"]
+            embedding = embedder.get_embedding(s["code"][:10000])[0] if embedder else []
+            if embedder and not embedding:          # Shinka's client returns [] on any error
+                raise RuntimeError(f"the embedding server returned nothing for seed {s['name']}")
             program = Program(
                 id=f"seed-{s['name']}-{uuid.uuid4().hex[:8]}", code=s["code"], generation=0,
                 combined_score=float(m["combined_score"]), public_metrics=m.get("public", {}),
                 private_metrics=m.get("private", {}), text_feedback=m.get("text_feedback", ""),
-                correct=True, metadata={"mevolve_island": s["island"], "mevolve_seed": s["name"]})
+                correct=True, embedding=embedding, metadata={"mevolve_island": s["island"], "mevolve_seed": s["name"]})
             db.add(program)
             ids.append(program.id)
     finally:
