@@ -204,7 +204,10 @@ def _cached(entry: Path) -> dict | None:
     """A repeat-cache entry, or None: a missing or unreadable entry is a miss, so the program is evaluated."""
     try:
         hit = json.loads(entry.read_text())
-        if isinstance(hit["program"], str) and isinstance(hit["metrics"]["private"], dict):
+        m = hit["metrics"]
+        score = m["combined_score"]
+        if (isinstance(hit["program"], str) and isinstance(m["private"], dict) and isinstance(m["public"], dict)
+                and isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score)):
             return hit
     except (OSError, ValueError, KeyError, TypeError):
         pass
@@ -273,10 +276,13 @@ def main(argv: list[str] | None = None) -> int:
         traceback.print_exc()
     correct = write_results(args.results_dir, metrics, error)
     if key and correct and not hit:        # failures are never stored: they are evaluated again
-        args.repeat_cache.mkdir(parents=True, exist_ok=True)
-        tmp = args.repeat_cache / f".{key}.{os.getpid()}"
-        tmp.write_text(json.dumps({"program": str(args.program_path), "metrics": metrics}, default=float) + "\n")
-        tmp.replace(args.repeat_cache / f"{key}.json")
+        try:                               # best effort: a failed write must not fail a scored program
+            args.repeat_cache.mkdir(parents=True, exist_ok=True)
+            tmp = args.repeat_cache / f".{key}.{os.getpid()}"
+            tmp.write_text(json.dumps({"program": str(args.program_path), "metrics": metrics}, default=float) + "\n")
+            tmp.replace(args.repeat_cache / f"{key}.json")
+        except OSError as e:
+            print(f"repeat cache: could not store the result ({e})", file=sys.stderr, flush=True)
     print(json.dumps({"correct": correct, "error": error,
                       "combined_score": (metrics or {}).get("combined_score")}), flush=True)
     return 0

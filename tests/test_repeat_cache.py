@@ -92,13 +92,24 @@ def test_a_repeat_still_passes_the_static_checks(tmp_path, monkeypatch):
     assert "static checks" in json.loads((program.parent / "results" / "correct.json").read_text())["error"]
 
 
-def test_an_unreadable_cache_entry_is_a_miss(tmp_path, monkeypatch):
+@pytest.mark.parametrize("corrupt", ["{not json", '{"program": "p", "metrics": {"combined_score": "72.5", '
+                                     '"public": {}, "private": {}}}', '{"program": "p", "metrics": '
+                                     '{"combined_score": NaN, "public": {}, "private": {}}}'])
+def test_an_unreadable_or_unscored_cache_entry_is_a_miss(tmp_path, monkeypatch, corrupt):
     calls = []
     run(tmp_path, "gen_1", TEMPLATE, monkeypatch, calls)
     for entry in (tmp_path / "cache").glob("*.json"):
-        entry.write_text("{not json")
+        entry.write_text(corrupt)
     out = run(tmp_path, "gen_2", TEMPLATE, monkeypatch, calls)
     assert calls == ["gen_1", "gen_2"] and out["combined_score"] == 72.5
+
+
+def test_a_cache_that_cannot_be_written_does_not_fail_the_program(tmp_path, monkeypatch):
+    calls = []
+    (tmp_path / "cache").write_text("a file, not a directory")
+    out = run(tmp_path, "gen_1", TEMPLATE, monkeypatch, calls)
+    assert out["combined_score"] == 72.5
+    assert json.loads((tmp_path / "gen_1" / "results" / "correct.json").read_text())["correct"]
 
 
 def test_a_missing_data_file_still_writes_the_result_files(tmp_path, monkeypatch):
