@@ -6,20 +6,24 @@ The config (JSON) names the data (freeze, cohorts file, generation and validatio
 the evaluator settings (workers per evaluation, max_em, n_draws), the model and its effort, the
 dollar cap, the number of proposals, the seeds (literature names, one per island after the
 template's island 0), Shinka's concurrency and migration, W&B, a node-local ``results_dir`` and an
-``out_dir`` the results are copied to at the end. Every key is listed in ``DEFAULTS``.
+``out_dir`` the results are copied to at the end, and ``embedding_python``: a Python with torch and
+transformers to serve code embeddings that are only observed (``embed_server``), or null for none.
+Every key is listed in ``DEFAULTS``.
 
 In order: environment checks; a pricing snapshot with the Claude models, offline (Shinka's bundled
 prices stop before Claude 5.x); the literature seeds evaluated (or read from ``seed_cache``) and
-placed on their islands; the Claude shim installed; Shinka's runner built and run; then a summary
+placed on their islands (the embedding server started first, if any); the Claude shim installed; Shinka's runner built and run; then a summary
 (islands, cost from the ledger) and the copy to ``out_dir``.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -39,6 +43,7 @@ DEFAULTS = {
     "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: no resampling, so not up to 9 calls
     "max_patch_attempts": 2,    # one repair attempt after an edit that does not apply (Han, 2026-11-04): <= 2 calls
     "repeat_cache": True,       # reuse the result of a program whose code repeats an earlier one (#52)
+    "embedding_python": None,   # a Python with torch and transformers: code embeddings, observed only (#56)
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
 }
@@ -52,7 +57,7 @@ def load_config(path: Path) -> dict:
             raise ValueError(f"{key} has an unset variable: {value}")
         return out
 
-    for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts"):
+    for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts", "embedding_python"):
         if config[key]:
             config[key] = expand(key, config[key])
     config["seeds"] = [expand("seeds", s) for s in config["seeds"]]      # literature names or program files
@@ -132,7 +137,7 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
     return metrics
 
 
-def build_runner(config: dict, task_message: str):
+def build_runner(config: dict, task_message: str, embedding_model: str | None = None):
     from shinka.core import EvolutionConfig, ShinkaEvolveRunner
     from shinka.database import DatabaseConfig
     from shinka.launch import LocalJobConfig
@@ -148,7 +153,8 @@ def build_runner(config: dict, task_message: str):
         task_sys_msg=task_message, num_generations=config["n_proposals"] + 1, language="python",
         llm_models=[config["model"]], llm_dynamic_selection=None,
         llm_kwargs={"temperatures": [1.0], "max_tokens": config["max_tokens"]},
-        meta_llm_models=None, novelty_llm_models=None, embedding_model=None,
+        meta_llm_models=None, novelty_llm_models=None,      # no novelty judge: embeddings are only observed
+        embedding_model=embedding_model,
         init_program_path=str(init_path), results_dir=str(results_dir), use_text_feedback=True,
         **({"patch_types": config["patch_types"], "patch_type_probs": [1 / len(config["patch_types"])] * len(config["patch_types"])}
            if config["patch_types"] else {}),
@@ -265,21 +271,49 @@ def main(argv: list[str] | None = None) -> int:
         install_fake_llm(results_dir / "ledger.jsonl")
     seeds.install_island_patch()
     from shinka.database import DatabaseConfig
-    seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed)
-    run_failed = True
-    try:
-        runner, _ = build_runner(config, task_message)
-        if not args.dry:
-            runner.run()
-        summary = summarize(config, started)
-        from .report import write_run_files
-        write_run_files(results_dir)          # proposals.csv and run_report.md
-        print(json.dumps({k: summary[k] for k in ("calls", "cost_usd", "stop_reasons", "islands")}, default=str),
-              flush=True)
-        run_failed = False
-    finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
-        end_of_run(config, results_dir, run_failed, args.dry)
+    with embedding_server(config["embedding_python"]) as embedding_model:
+        seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
+        run_failed = True
+        try:
+            runner, _ = build_runner(config, task_message, embedding_model)
+            if not args.dry:
+                runner.run()
+            summary = summarize(config, started)
+            from .report import write_run_files
+            write_run_files(results_dir)          # proposals.csv and run_report.md
+            print(json.dumps({k: summary[k] for k in ("calls", "cost_usd", "stop_reasons", "islands")}, default=str),
+                  flush=True)
+            run_failed = False
+        finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
+            end_of_run(config, results_dir, run_failed, args.dry)
     return 0
+
+
+@contextlib.contextmanager
+def embedding_server(python: str | None):
+    """Shinka's ``embedding_model`` while the block runs: None without ``python``, else the address of
+    ``embed_server`` run by that Python on 127.0.0.1, stopped when the block ends."""
+    if not python:
+        yield None
+        return
+    from .embed_server import MODEL
+
+    src = str(Path(__file__).resolve().parents[2])      # this MEvolve, importable by the other Python
+    env = {**os.environ, "HF_HUB_OFFLINE": "1",
+           "PYTHONPATH": os.pathsep.join(p for p in (src, os.environ.get("PYTHONPATH")) if p)}
+    proc = subprocess.Popen([python, "-m", "mevolve.search.embed_server"], stdout=subprocess.PIPE, text=True, env=env)
+    try:
+        line = proc.stdout.readline()       # "port <n>" once the model is loaded; "" if the server died
+        if not line.startswith("port "):
+            raise RuntimeError(f"the embedding server did not start (exit code {proc.wait()}); see the log above")
+        print(f"embedding server: {MODEL} on 127.0.0.1:{line.split()[1]}", flush=True)
+        yield f"local/{MODEL}@http://127.0.0.1:{int(line.split()[1])}/v1"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def end_of_run(config: dict, results_dir: Path, run_failed: bool, dry: bool) -> None:
