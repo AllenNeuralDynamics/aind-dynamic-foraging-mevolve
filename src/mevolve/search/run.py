@@ -125,6 +125,9 @@ def seed_metrics(name: str, code: str, config: dict) -> dict:
                                      evaluator_digest()]).encode()).hexdigest()[:16]
     cache = Path(config["seed_cache"]) / f"{name}_{key}.json" if config["seed_cache"] else None
     if cache and cache.exists():
+        from .checks import check_source
+
+        check_source(code, config["max_params"], config["max_latent"])   # a hit is held to this run's limits
         return json.loads(cache.read_text())
     path = Path(config["results_dir"]) / "seeds" / f"{name}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
