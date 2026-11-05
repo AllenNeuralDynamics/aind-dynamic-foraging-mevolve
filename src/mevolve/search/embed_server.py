@@ -14,8 +14,9 @@ OpenAI's format on 127.0.0.1. ``run.main`` starts it with
 
     python -m mevolve.search.embed_server
 
-and it prints ``port <n>`` to stdout once the model is loaded. The model must be in the Hugging Face
-cache (``HF_HOME``): ``run.main`` sets ``HF_HUB_OFFLINE``, so a run never downloads it.
+and it prints ``port <n>`` to stdout once the model is loaded (about a minute). The model must be in
+the Hugging Face cache the job names in ``HF_HOME``: ``run.main`` sets ``HF_HUB_OFFLINE``, so a run
+never downloads it.
 """
 from __future__ import annotations
 

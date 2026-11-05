@@ -115,6 +115,8 @@ def place(results_dir: Path, db_config, seeds: list[dict], embedding_model: str 
         for s in seeds:
             m = s["metrics"]
             embedding = embedder.get_embedding(s["code"][:10000])[0] if embedder else []
+            if embedder and not embedding:          # Shinka's client returns [] on any error
+                raise RuntimeError(f"the embedding server returned nothing for seed {s['name']}")
             program = Program(
                 id=f"seed-{s['name']}-{uuid.uuid4().hex[:8]}", code=s["code"], generation=0,
                 combined_score=float(m["combined_score"]), public_metrics=m.get("public", {}),

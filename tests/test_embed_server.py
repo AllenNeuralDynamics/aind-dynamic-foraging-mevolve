@@ -93,3 +93,18 @@ def test_a_server_that_dies_stops_the_run(tmp_path):
     with pytest.raises(RuntimeError, match="did not start"):
         with run.embedding_server(script(tmp_path, "exit 3\n")):
             pass
+
+
+def test_a_seed_without_its_embedding_stops_the_run(tmp_path):
+    from shinka.database import DatabaseConfig
+
+    srv = embed_server.make_server(lambda texts: ([[] for _ in texts], 0), MODEL)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    metrics = {"combined_score": 70.0, "public": {}, "private": {}, "text_feedback": ""}
+    try:
+        with pytest.raises(RuntimeError, match="returned nothing for seed s"):
+            seeds.place(tmp_path, DatabaseConfig(num_islands=2), [{"name": "s", "code": "x = 1\n", "island": 1,
+                        "metrics": metrics}], f"local/{MODEL}@http://127.0.0.1:{srv.server_address[1]}/v1")
+    finally:
+        srv.shutdown()
+        srv.server_close()

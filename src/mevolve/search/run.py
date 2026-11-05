@@ -7,12 +7,14 @@ the evaluator settings (workers per evaluation, max_em, n_draws), the model and 
 dollar cap, the number of proposals, the seeds (literature names, one per island after the
 template's island 0), Shinka's concurrency and migration, W&B, a node-local ``results_dir`` and an
 ``out_dir`` the results are copied to at the end, and ``embedding_python``: a Python with torch and
-transformers to serve code embeddings that are only observed (``embed_server``), or null for none.
-Every key is listed in ``DEFAULTS``.
+transformers to serve code embeddings that are only observed (``embed_server``; the job sets
+``HF_HOME`` to a Hugging Face cache holding the model), or null for none. Every key is listed in
+``DEFAULTS``.
 
 In order: environment checks; a pricing snapshot with the Claude models, offline (Shinka's bundled
-prices stop before Claude 5.x); the literature seeds evaluated (or read from ``seed_cache``) and
-placed on their islands (the embedding server started first, if any); the Claude shim installed; Shinka's runner built and run; then a summary
+prices stop before Claude 5.x); the embedding server started, if any (``--dry`` checks it); the
+literature seeds evaluated (or read from ``seed_cache``) and placed on their islands; the Claude
+shim installed; Shinka's runner built and run; then a summary
 (islands, cost from the ledger) and the copy to ``out_dir``.
 """
 from __future__ import annotations
@@ -259,19 +261,19 @@ def main(argv: list[str] | None = None) -> int:
 
     write_pricing_snapshot(results_dir)
     task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]))
-    placed = []
-    for island, seed in enumerate(config["seeds"], start=1):
-        name, code = seeds.seed_name_and_source(seed)
-        placed.append({"name": name, "code": code, "island": island, "metrics": seed_metrics(name, code, config)})
-        print(f"seed {name} on island {island}: {placed[-1]['metrics']['combined_score']:.3f}", flush=True)
-    claude.install(claude.Settings(ledger=results_dir / "ledger.jsonl", effort=config["effort"],
-                                   max_usd=config["max_usd"], max_tokens=config["max_tokens"],
-                                   cache_prefix=task_message))
-    if args.fake_llm:
-        install_fake_llm(results_dir / "ledger.jsonl")
-    seeds.install_island_patch()
-    from shinka.database import DatabaseConfig
-    with embedding_server(config["embedding_python"]) as embedding_model:
+    with embedding_server(config["embedding_python"]) as embedding_model:     # first: a bad setup fails before any fit
+        placed = []
+        for island, seed in enumerate(config["seeds"], start=1):
+            name, code = seeds.seed_name_and_source(seed)
+            placed.append({"name": name, "code": code, "island": island, "metrics": seed_metrics(name, code, config)})
+            print(f"seed {name} on island {island}: {placed[-1]['metrics']['combined_score']:.3f}", flush=True)
+        claude.install(claude.Settings(ledger=results_dir / "ledger.jsonl", effort=config["effort"],
+                                       max_usd=config["max_usd"], max_tokens=config["max_tokens"],
+                                       cache_prefix=task_message))
+        if args.fake_llm:
+            install_fake_llm(results_dir / "ledger.jsonl")
+        seeds.install_island_patch()
+        from shinka.database import DatabaseConfig
         seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
         run_failed = True
         try:
