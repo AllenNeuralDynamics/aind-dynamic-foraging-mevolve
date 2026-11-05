@@ -38,6 +38,7 @@ DEFAULTS = {
     "archive_size": 40, "eval_time": "02:00:00", "patch_types": None,
     "max_patch_resamples": 1, "max_novelty_attempts": 1,   # 1 and 1: no resampling, so not up to 9 calls
     "max_patch_attempts": 2,    # one repair attempt after an edit that does not apply (Han, 2026-11-04): <= 2 calls
+    "repeat_cache": True,       # reuse the result of a program whose code repeats an earlier one (#52)
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
 }
@@ -165,7 +166,8 @@ def build_runner(config: dict, task_message: str):
                             "simulated_validation": config["simulated"]["validation"]} if config["simulated"] else
                            {"freeze": str(config["freeze"]), "cohorts": str(config["cohorts"]),
                             "generation": config["generation"], "validation": config["validation"]}),
-                        "workers": config["workers"], "max_em": config["max_em"], "n_draws": config["n_draws"]})
+                        "workers": config["workers"], "max_em": config["max_em"], "n_draws": config["n_draws"],
+                        **({"repeat_cache": str(results_dir / "repeat_cache")} if config["repeat_cache"] else {})})
     db = DatabaseConfig(num_islands=1 + len(config["seeds"]), archive_size=config["archive_size"],
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
     runner = ShinkaEvolveRunner(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
