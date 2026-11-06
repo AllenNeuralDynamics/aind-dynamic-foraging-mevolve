@@ -118,6 +118,35 @@ def check_shapes(prog) -> None:
         raise ProgramRejected(f"predict returns shape {logits.shape}, not (2,) logits over [left, right]")
 
 
+def _inspect(program_path: str, shape: dict) -> dict:
+    """In an isolated worker: load the candidate, check what it declares against what it is, trace one
+    step (``check_shapes``); returns its parameter bounds."""
+    from mevolve import isolation, program
+    from mevolve.search.checks import ProgramRejected
+
+    isolation.install(program_path)
+    prog = program.load(program_path)
+    if (len(prog.params), prog.n_latent) != (shape["n_params"], shape["n_latent"]):
+        raise ProgramRejected(f"the loaded program has {len(prog.params)} parameters and {prog.n_latent} latent "
+                              f"variables, not the {shape['n_params']} and {shape['n_latent']} its literals declare")
+    check_shapes(prog)
+    return {str(k): [float(lo), float(hi)] for k, (lo, hi) in prog.params.items()}
+
+
+def inspect_isolated(program_path: Path, shape: dict) -> dict:
+    """``_inspect`` in a fresh process with evaluation isolation (#40), so the candidate never runs
+    unisolated in this one, which writes the results."""
+    import multiprocessing as mp
+
+    from mevolve import evaluate
+    from mevolve.search import shinka_eval      # by module name, so the worker can import it
+
+    with mp.get_context("spawn").Pool(1, initializer=evaluate._die_with_parent) as pool:
+        bounds = evaluate.from_json(pool.apply(evaluate.json_call, (shinka_eval._inspect,
+                                                                     (str(Path(program_path).resolve()), shape))))
+    return {k: tuple(v) for k, v in bounds.items()}
+
+
 def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: Path | None, generation: str | None,
                      validation: str | None, workers: int, max_em: int = 20, n_draws: int = 2048,
                      simulated: tuple[Path, Path] | None = None, max_params: int = 8, max_latent: int = 6) -> dict:
@@ -131,12 +160,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
 
     t0 = time.time()
     shape = check_source(Path(program_path).read_text(), max_params, max_latent)
-    prog = program.load(program_path)       # executes the candidate: only after the checks
-    if (len(prog.params), prog.n_latent) != (shape["n_params"], shape["n_latent"]):
-        from mevolve.search.checks import ProgramRejected
-        raise ProgramRejected(f"the loaded program has {len(prog.params)} parameters and {prog.n_latent} latent "
-                              f"variables, not the {shape['n_params']} and {shape['n_latent']} its literals declare")
-    check_shapes(prog)
+    bounds = inspect_isolated(program_path, shape)      # executes the candidate: only after the checks, isolated
     if simulated:
         from mevolve.gate4 import load_simulated
         gen_subjects, val_subjects = (load_simulated(p) for p in simulated)
@@ -148,7 +172,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
         val_subjects = [evaluate.subject_data(freeze, s) for s in cohorts[validation]]
     subjects = gen_subjects + val_subjects
     records = evaluate.evaluate(program_path, subjects, regime="2level", workers=workers, max_em=max_em,
-                                n_draws=n_draws)
+                                n_draws=n_draws, isolate=True)        # a pool even of one: never unisolated here
     gen_records, val_records = records[:len(gen_subjects)], records[len(gen_subjects):]
     val_score, gen_score = evaluate.program_score(val_records), evaluate.program_score(gen_records)
     seconds = [r["seconds"] for r in records]
@@ -160,7 +184,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
         "private": {"validation": val_score, "generation": gen_score, "seconds": time.time() - t0,
                     "subject_seconds_max": max(seconds), "max_em": max_em, "n_draws": n_draws,
                     "cohorts": [generation, validation], "n_subjects": [len(gen_subjects), len(val_subjects)]},
-        "text_feedback": feedback(val_score, gen_score, gen_records, prog.params),
+        "text_feedback": feedback(val_score, gen_score, gen_records, bounds),
     }
 
 

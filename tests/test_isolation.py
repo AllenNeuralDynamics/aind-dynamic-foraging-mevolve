@@ -1,0 +1,155 @@
+"""Evaluation isolation (#40): in a pool worker, a program cannot read the key files, write, or reach the network."""
+import json
+import subprocess
+import sys
+import textwrap
+
+import pytest
+
+from mevolve import evaluate, program
+
+from test_score import _subject
+
+PROBE = textwrap.dedent("""
+    import json, socket, subprocess, sys
+    from mevolve import isolation
+    isolation.install(sys.argv[1])
+    out = {}
+    def attempt(name, fn):
+        try:
+            fn()
+            out[name] = "ok"
+        except PermissionError as e:
+            out[name] = "denied"
+    attempt("read_secret", lambda: open(sys.argv[2]).read())
+    attempt("read_program_dir", lambda: open(sys.argv[3]).read())
+    attempt("write_program_dir", lambda: open(sys.argv[3] + ".new", "w"))
+    attempt("socket", lambda: socket.create_connection(("127.0.0.1", 9), timeout=1))
+    attempt("subprocess", lambda: subprocess.run(["true"]))
+    attempt("lazy_import", lambda: __import__("tomllib"))
+    attempt("relative_path", lambda: open("notes.txt").read())
+    import os
+    attempt("parent_environ", lambda: open(f"/proc/{os.getppid()}/environ").read())
+    print(json.dumps(out))
+""")
+
+
+def test_the_hook_denies_files_writes_network_and_processes(tmp_path):
+    secret = tmp_path / "home" / ".config" / "mevolve" / "anthropic_api_key"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("not-a-key")
+    prog_dir = tmp_path / "prog"
+    prog_dir.mkdir()
+    (prog_dir / "p.py").write_text("# a program\n")
+    (prog_dir / "notes.txt").write_text("beside the program\n")
+    r = subprocess.run([sys.executable, "-c", PROBE, str(prog_dir / "p.py"), str(secret), str(prog_dir / "notes.txt")],
+                       capture_output=True, text=True, check=True)
+    assert json.loads(r.stdout) == {"read_secret": "denied", "read_program_dir": "ok", "write_program_dir": "denied",
+                                    "socket": "denied", "subprocess": "denied", "lazy_import": "ok",
+                                    "parent_environ": "denied", "relative_path": "denied"}
+
+
+def test_a_program_that_escapes_the_static_checks_cannot_read_a_key_in_a_worker(tmp_path):
+    secret = tmp_path / "home" / ".config" / "mevolve" / "anthropic_api_key"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("not-a-key")
+    source = (program.LITERATURE_DIR / "hattori2019.py").read_text()
+    (tmp_path / "prog").mkdir()
+    path = tmp_path / "prog" / "escape.py"             # the program's directory is readable; the key's is not
+    path.write_text(source + f"\n_stolen = open({str(secret)!r}).read()\n")      # the checks would reject this
+    with pytest.raises(PermissionError, match="evaluation isolation"):
+        evaluate.evaluate(path, [_subject(0), _subject(1)], regime="subject", n_starts=2, workers=2)
+
+
+def test_isolated_workers_score_as_before():
+    path = program.LITERATURE_DIR / "hattori2019.py"
+    subjects = [_subject(0), _subject(1)]
+    pooled = evaluate.evaluate(path, subjects, regime="subject", n_starts=2, workers=2)
+    alone = evaluate.evaluate(path, subjects, regime="subject", n_starts=2, workers=1)
+    assert [r["log_lik"] for r in pooled] == [r["log_lik"] for r in alone]
+
+
+def test_the_search_loads_a_candidate_only_in_an_isolated_worker(tmp_path):
+    pytest.importorskip("shinka")
+    from mevolve.search import shinka_eval
+    from mevolve.search.checks import check_source
+
+    secret = tmp_path / "home" / ".config" / "mevolve" / "anthropic_api_key"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("not-a-key")
+    (tmp_path / "prog").mkdir()
+    good = tmp_path / "prog" / "good.py"
+    good.write_text((program.LITERATURE_DIR / "hattori2019.py").read_text())
+    shape = check_source(good.read_text())
+    assert set(shinka_eval.inspect_isolated(good, shape)) == set(program.load(good).params)
+    bad = tmp_path / "prog" / "bad.py"
+    bad.write_text(good.read_text() + f"\n_stolen = open({str(secret)!r}).read()\n")
+    with pytest.raises(PermissionError, match="evaluation isolation"):
+        shinka_eval.inspect_isolated(bad, shape)
+
+
+def test_only_json_crosses_back_from_the_isolated_worker(tmp_path):
+    pytest.importorskip("shinka")
+    from mevolve.search import shinka_eval
+    from mevolve.search.checks import check_source
+
+    marker = tmp_path / "unpickled_in_the_parent"
+    (tmp_path / "prog").mkdir()
+    good = (program.LITERATURE_DIR / "hattori2019.py").read_text()
+    path = tmp_path / "prog" / "sly.py"
+    # a parameter name whose pickle would run code where it is unpickled (the static checks reject classes)
+    path.write_text(good + f"""
+class _Name(str):
+    def __reduce__(self):
+        return (open, ({str(marker)!r}, "w"))
+PARAMS = {{_Name(k): v for k, v in PARAMS.items()}}
+""")
+    bounds = shinka_eval.inspect_isolated(path, check_source(good))
+    assert not marker.exists() and all(type(k) is str for k in bounds)
+
+
+def test_the_home_directory_on_sys_path_does_not_open_the_keys(tmp_path):
+    home = tmp_path / "home"
+    secret = home / ".config" / "mevolve" / "anthropic_api_key"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("not-a-key")
+    (home / "notes.txt").write_text("in home\n")
+    (tmp_path / "prog").mkdir()
+    (tmp_path / "prog" / "p.py").write_text("# a program\n")
+    import os
+    env = {**os.environ, "HOME": str(home), "PYTHONPATH": os.pathsep.join([*sys.path, str(home)])}
+    code = textwrap.dedent("""
+        import json, sys
+        from mevolve import isolation
+        isolation.install(sys.argv[1])
+        out = {}
+        for name, path in (("secret", sys.argv[2]), ("home_file", sys.argv[3])):
+            try:
+                open(path).read()
+                out[name] = "ok"
+            except PermissionError:
+                out[name] = "denied"
+        print(json.dumps(out))
+    """)
+    r = subprocess.run([sys.executable, "-c", code, str(tmp_path / "prog" / "p.py"), str(secret), str(home / "notes.txt")],
+                       capture_output=True, text=True, check=True, env=env)
+    assert json.loads(r.stdout) == {"secret": "denied", "home_file": "denied"}
+
+
+def test_an_error_whose_message_raises_still_crosses_as_json():
+    class Nasty(Exception):
+        def __str__(self):
+            raise Nasty()
+
+    def boom():
+        raise Nasty()
+
+    out = json.loads(evaluate.json_call(boom, ()))
+    assert out["error"][0] == "RuntimeError"
+
+
+def test_a_relative_program_path_is_resolved_before_the_hook(tmp_path, monkeypatch):
+    (tmp_path / "hattori.py").write_text((program.LITERATURE_DIR / "hattori2019.py").read_text())
+    monkeypatch.chdir(tmp_path)
+    rec, = evaluate.evaluate("hattori.py", [_subject(0)], regime="subject", n_starts=2, workers=1, isolate=True)
+    assert rec["n_trials"] > 0

@@ -12,10 +12,13 @@ sessions, never the whole freeze.
 """
 from __future__ import annotations
 
+import builtins
+import json
 import multiprocessing as mp
 import os
 import time
 import zlib
+from pathlib import Path
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,9 +43,11 @@ def _evaluate_one(args) -> dict:
     program_path, data, regime, seed, n_draws, n_starts, max_em = args
     import jax
 
-    from . import fitter, fitting, program, scoring
+    from . import fitter, fitting, isolation, program, scoring
     from .fingerprints import fingerprints
 
+    if mp.parent_process() is not None:     # a pool worker: no files or network for the program (#40)
+        isolation.install(program_path)
     t0 = time.time()
     prog = program.load(program_path)
     f = fitter.fit(prog, data.fit, regime, seed=seed, n_starts=n_starts, max_em=max_em)
@@ -106,21 +111,57 @@ def program_score(records: list[dict]) -> dict:
             "per_subject": per_subject, "two_level_failed": failed}
 
 
+def json_call(fn, args) -> str:
+    """In a worker: ``fn(*args)`` as JSON, or the error's type name and message. Only plain JSON crosses
+    back to the parent, never a pickle a candidate could shape (#40)."""
+    try:
+        return json.dumps({"ok": fn(*args)}, default=_plain)
+    except BaseException as e:      # noqa: BLE001 - every failure crosses as text
+        try:
+            return json.dumps({"error": [str(type(e).__name__), str(e)]})
+        except BaseException:       # noqa: BLE001 - even describing it failed (a candidate's __str__)
+            return '{"error": ["RuntimeError", "a candidate raised an error that could not be described"]}'
+
+
+def _plain(x):
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    raise TypeError(f"{type(x).__name__} does not cross from a worker")
+
+
+def from_json(text: str):
+    """``json_call``'s result in the parent; a worker's error is raised again as a built-in exception of the
+    same name (``ProgramRejected`` for the checks'), else as ``RuntimeError``."""
+    out = json.loads(text)
+    if "error" not in out:
+        return out["ok"]
+    name, message = out["error"]
+    if name == "ProgramRejected":
+        from .search.checks import ProgramRejected
+        raise ProgramRejected(message)
+    cls = getattr(builtins, name, None)
+    raise (cls if isinstance(cls, type) and issubclass(cls, Exception) else RuntimeError)(
+        message if cls else f"{name}: {message}")
+
+
 def evaluate(program_path, subjects: list[SubjectData], regime: str = "2level", seed: int = 0,
              n_draws: int = 2048, n_starts: int = 8, workers: int | None = None,
-             max_em: int = 20) -> list[dict]:
+             max_em: int = 20, isolate: bool = False) -> list[dict]:
     """Fit and score every subject; returns one record per subject, in input order. ``max_em``
     caps Laplace-EM: 20 for the search, more to run it to convergence for reported
-    scores (ADR 0004)."""
-    jobs = [(str(program_path), d, regime, seed, n_draws, n_starts, max_em) for d in subjects]
+    scores (ADR 0004). Pool workers are isolated (#40); ``workers=1`` runs here, unisolated, unless
+    ``isolate`` (the search's candidates) asks for a pool of one."""
+    jobs = [(str(Path(program_path).resolve()), d, regime, seed, n_draws, n_starts, max_em) for d in subjects]
     workers = workers or min(len(jobs), os.cpu_count() or 1)
-    if workers == 1:
+    if workers == 1 and not isolate:
         return [_evaluate_one(j) for j in jobs]
     saved = {k: os.environ.get(k) for k in WORKER_ENV}
     os.environ.update(WORKER_ENV)      # spawned workers read these at start
     try:
         with mp.get_context("spawn").Pool(workers, initializer=_die_with_parent) as pool:
-            return pool.map(_evaluate_one, jobs, chunksize=1)
+            return [from_json(r) for r in pool.starmap(json_call, [(_evaluate_one, (j,)) for j in jobs], chunksize=1)]
     finally:
         for k, v in saved.items():
             if v is None:
