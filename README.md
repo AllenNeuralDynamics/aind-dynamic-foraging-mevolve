@@ -75,6 +75,14 @@ so that the job **ends** earliest (Han, 2026-11-05), not by the speed of one eva
 
 On 2026-11-05, slots of 56 CPUs were planned for the next morning, while 17 slots of 24 CPUs fit at once.
 
+**Stopping rule** (`stop_se`, `stop_window`; #63). Besides `max_usd` and `n_proposals`, a search can stop
+when `stop_window` proposals finish without the best validation score rising more than `stop_se` above
+an anchor. The anchor starts at the best seed (or template) and moves only on such a rise, so small
+rises count once they add up past `stop_se`. Every finished proposal counts, scored or not. When the
+rule is met, no new proposals start; running evaluations and Claude calls finish and are recorded, as
+under the dollar cap, and `stop_rule.json` (and `run_summary.json`) say the rule ended the run. The rule
+is read from the database each time (`mevolve.search.stopping`), so a resumed run gets the same answer.
+
 ## What it does
 
 - An LLM (Claude) proposes **programs**: short JAX modules that predict each choice of a mouse
