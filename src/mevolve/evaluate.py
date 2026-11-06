@@ -18,6 +18,7 @@ import multiprocessing as mp
 import os
 import time
 import zlib
+from pathlib import Path
 from dataclasses import dataclass
 
 import numpy as np
@@ -115,8 +116,11 @@ def json_call(fn, args) -> str:
     back to the parent, never a pickle a candidate could shape (#40)."""
     try:
         return json.dumps({"ok": fn(*args)}, default=_plain)
-    except Exception as e:      # noqa: BLE001 - every failure crosses as text
-        return json.dumps({"error": [type(e).__name__, str(e)]})
+    except BaseException as e:      # noqa: BLE001 - every failure crosses as text
+        try:
+            return json.dumps({"error": [str(type(e).__name__), str(e)]})
+        except BaseException:       # noqa: BLE001 - even describing it failed (a candidate's __str__)
+            return '{"error": ["RuntimeError", "a candidate raised an error that could not be described"]}'
 
 
 def _plain(x):
@@ -149,7 +153,7 @@ def evaluate(program_path, subjects: list[SubjectData], regime: str = "2level", 
     caps Laplace-EM: 20 for the search, more to run it to convergence for reported
     scores (ADR 0004). Pool workers are isolated (#40); ``workers=1`` runs here, unisolated, unless
     ``isolate`` (the search's candidates) asks for a pool of one."""
-    jobs = [(str(program_path), d, regime, seed, n_draws, n_starts, max_em) for d in subjects]
+    jobs = [(str(Path(program_path).resolve()), d, regime, seed, n_draws, n_starts, max_em) for d in subjects]
     workers = workers or min(len(jobs), os.cpu_count() or 1)
     if workers == 1 and not isolate:
         return [_evaluate_one(j) for j in jobs]

@@ -10,8 +10,9 @@ of the process, so every program the worker runs later is covered. From then on,
 
 - ``open`` for writing fails anywhere, and ``open`` for reading fails outside Python's import paths
   (``sys.prefix``, ``sys.path``: the lazy imports a fit does), the program's own directory, ``/dev``
-  and ``/sys``: the key files in the home directory, and other processes' start-up environments under
-  ``/proc``, are out of reach;
+  and ``/sys`` (never the home directory or one above it, and never the key directories ``SECRETS``
+  under it, whatever ``sys.path`` holds): the key files, and other processes' start-up environments
+  under ``/proc``, are out of reach;
 - ``open`` with a relative path fails (it may be relative to a directory descriptor the hook cannot see);
 - sockets, subprocesses, ``exec``-family calls, ``fork``, ``ctypes`` and file system changes fail.
 
@@ -39,12 +40,23 @@ WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 _installed = False
 
 
+SECRETS = (".config", ".ssh", ".aws", ".gnupg", ".netrc", ".git-credentials", ".docker", ".kube")
+
+
 def _roots(program_path: Path) -> tuple[str, ...]:
+    home = Path.home().resolve()
     roots = {sys.prefix, sys.base_prefix, sys.exec_prefix, "/dev",
              "/sys",        # hardware facts; JAX reads PCI vendor ids when it looks for accelerators
              str(Path(program_path).resolve().parent)}   # not /proc: other processes' start-up environments
-    roots |= {str(Path(p).resolve()) for p in sys.path if p}
+    for p in sys.path:      # import paths, but never the home directory or a directory above it
+        if p and not home.is_relative_to(Path(p).resolve()):
+            roots.add(str(Path(p).resolve()))
     return tuple(sorted(r.rstrip("/") + "/" for r in roots))
+
+
+def _secrets() -> tuple[str, ...]:
+    home = Path.home().resolve()
+    return tuple(str(home / s) + "/" for s in SECRETS)
 
 
 def install(program_path: Path | str) -> None:
@@ -53,7 +65,7 @@ def install(program_path: Path | str) -> None:
     if _installed:
         return
     sys.dont_write_bytecode = True
-    roots = _roots(Path(program_path))
+    roots, secrets = _roots(Path(program_path)), _secrets()
 
     def hook(event, args):
         if event == "open":
@@ -67,7 +79,7 @@ def install(program_path: Path | str) -> None:
                 if not os.path.isabs(os.fsdecode(path)):    # relative to an unknown dir_fd: not checkable
                     raise PermissionError(f"evaluation isolation: relative path {path!r}")
                 full = os.path.realpath(os.fsdecode(path)) + "/"
-                if not full.startswith(roots):
+                if full.startswith(secrets) or not full.startswith(roots):
                     raise PermissionError(f"evaluation isolation: {path} is outside the allowed paths")
         elif event in DENIED:
             raise PermissionError(f"evaluation isolation: {event} is not allowed")

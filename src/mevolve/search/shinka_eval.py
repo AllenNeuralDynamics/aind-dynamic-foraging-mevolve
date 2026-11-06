@@ -142,7 +142,8 @@ def inspect_isolated(program_path: Path, shape: dict) -> dict:
     from mevolve.search import shinka_eval      # by module name, so the worker can import it
 
     with mp.get_context("spawn").Pool(1, initializer=evaluate._die_with_parent) as pool:
-        bounds = evaluate.from_json(pool.apply(evaluate.json_call, (shinka_eval._inspect, (str(program_path), shape))))
+        bounds = evaluate.from_json(pool.apply(evaluate.json_call, (shinka_eval._inspect,
+                                                                     (str(Path(program_path).resolve()), shape))))
     return {k: tuple(v) for k, v in bounds.items()}
 
 

@@ -106,3 +106,50 @@ PARAMS = {{_Name(k): v for k, v in PARAMS.items()}}
 """)
     bounds = shinka_eval.inspect_isolated(path, check_source(good))
     assert not marker.exists() and all(type(k) is str for k in bounds)
+
+
+def test_the_home_directory_on_sys_path_does_not_open_the_keys(tmp_path):
+    home = tmp_path / "home"
+    secret = home / ".config" / "mevolve" / "anthropic_api_key"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("not-a-key")
+    (home / "notes.txt").write_text("in home\n")
+    (tmp_path / "prog").mkdir()
+    (tmp_path / "prog" / "p.py").write_text("# a program\n")
+    import os
+    env = {**os.environ, "HOME": str(home), "PYTHONPATH": os.pathsep.join([*sys.path, str(home)])}
+    code = textwrap.dedent("""
+        import json, sys
+        from mevolve import isolation
+        isolation.install(sys.argv[1])
+        out = {}
+        for name, path in (("secret", sys.argv[2]), ("home_file", sys.argv[3])):
+            try:
+                open(path).read()
+                out[name] = "ok"
+            except PermissionError:
+                out[name] = "denied"
+        print(json.dumps(out))
+    """)
+    r = subprocess.run([sys.executable, "-c", code, str(tmp_path / "prog" / "p.py"), str(secret), str(home / "notes.txt")],
+                       capture_output=True, text=True, check=True, env=env)
+    assert json.loads(r.stdout) == {"secret": "denied", "home_file": "denied"}
+
+
+def test_an_error_whose_message_raises_still_crosses_as_json():
+    class Nasty(Exception):
+        def __str__(self):
+            raise Nasty()
+
+    def boom():
+        raise Nasty()
+
+    out = json.loads(evaluate.json_call(boom, ()))
+    assert out["error"][0] == "RuntimeError"
+
+
+def test_a_relative_program_path_is_resolved_before_the_hook(tmp_path, monkeypatch):
+    (tmp_path / "hattori.py").write_text((program.LITERATURE_DIR / "hattori2019.py").read_text())
+    monkeypatch.chdir(tmp_path)
+    rec, = evaluate.evaluate("hattori.py", [_subject(0)], regime="subject", n_starts=2, workers=1, isolate=True)
+    assert rec["n_trials"] > 0
