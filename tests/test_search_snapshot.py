@@ -76,11 +76,12 @@ def test_restore_fills_a_fresh_results_dir(tmp_path):
     make_run(tmp_path / "run").close()
     snapshot.take(tmp_path / "run", tmp_path / "snap")
     restored = snapshot.restore(tmp_path / "snap", tmp_path / "new")
-    assert restored["programs"] == 3 and restored["max_generation"] == 3
+    assert restored["programs"] == 3 and restored["max_generation"] == 2    # 3 only failed
     con = sqlite3.connect(tmp_path / "new" / "programs.sqlite")
     assert con.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 3
     con.close()
-    assert (tmp_path / "new" / "gen_3" / "main.py").exists() and (tmp_path / "new" / "ledger.jsonl").exists()
+    assert (tmp_path / "new" / "gen_2" / "main.py").exists() and (tmp_path / "new" / "ledger.jsonl").exists()
+    assert not (tmp_path / "new" / "gen_3").exists()        # above the last program: Shinka makes it again
     assert not (tmp_path / "new" / "snapshot.json").exists()
 
 
@@ -167,4 +168,12 @@ def test_restore_drops_generation_directories_its_database_does_not_record(tmp_p
     (tmp_path / "snap" / "gen_7" / "results").mkdir(parents=True)     # copied by a snapshot cut short
     snapshot.restore(tmp_path / "snap", tmp_path / "new")
     assert not (tmp_path / "new" / "gen_7").exists() and not (tmp_path / "snap" / "gen_7").exists()
-    assert (tmp_path / "new" / "gen_3").exists()
+    assert (tmp_path / "new" / "gen_2").exists()
+
+
+def test_a_leftover_partial_copy_is_replaced_not_merged(tmp_path):
+    make_run(tmp_path / "run").close()
+    (tmp_path / "snap" / ".gen_1.part").mkdir(parents=True)
+    (tmp_path / "snap" / ".gen_1.part" / "failure.json").write_text("{}")
+    snapshot.take(tmp_path / "run", tmp_path / "snap")
+    assert not (tmp_path / "snap" / "gen_1" / "failure.json").exists() and (tmp_path / "snap" / "gen_1" / "main.py").exists()

@@ -58,7 +58,8 @@ def take(results_dir: Path, dest: Path) -> dict:
     copied = 0
     for d in results_dir.glob("gen_*"):
         if d.is_dir() and d.name[4:].isdigit() and int(d.name[4:]) in settled and not (dest / d.name).exists():
-            shutil.copytree(d, dest / f".{d.name}.part", copy_function=shutil.copyfile, dirs_exist_ok=True)
+            shutil.rmtree(dest / f".{d.name}.part", ignore_errors=True)     # never merge into a leftover
+            shutil.copytree(d, dest / f".{d.name}.part", copy_function=shutil.copyfile)
             os.replace(dest / f".{d.name}.part", dest / d.name)
             copied += 1
     os.replace(part, dest / DB)                     # last: the database never runs ahead of the ledger
@@ -73,21 +74,20 @@ def _write_text(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def settled_generations(db: Path) -> set[int]:
-    """Generations recorded in a database: a program, or a proposal that failed and left none."""
+def last_program_generation(db: Path) -> int:
+    """The highest generation with a program: where Shinka's resume continues (failures do not move it)."""
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        out = {g for (g,) in con.execute("SELECT DISTINCT generation FROM programs")}
-        return out | {g for (g,) in con.execute("SELECT DISTINCT generation FROM attempt_log WHERE status = 'failed'")}
+        return con.execute("SELECT COALESCE(MAX(generation), 0) FROM programs").fetchone()[0]
     finally:
         con.close()
 
 
 def restore(snapshot_dir: Path, results_dir: Path) -> dict:
     """Fill an empty ``results_dir`` from a complete snapshot; returns its ``snapshot.json`` with
-    ``max_generation``. Only the generation directories its database records are restored; others (a
-    snapshot cut short after copying them) are removed from the snapshot too, so they cannot stand in for
-    the directories of the generations the resumed run will make with those numbers.
+    ``max_generation``, the highest generation with a program, where Shinka continues. Generation
+    directories above it (a failure, or a snapshot cut short after copying them) are removed from the
+    snapshot and not restored: the resumed run makes new generations with those numbers.
 
     Generations still running when the snapshot was taken are not retried: their numbers stay unused
     (the stopping rule counts finished proposals, and the ledger keeps their Claude calls)."""
@@ -95,18 +95,18 @@ def restore(snapshot_dir: Path, results_dir: Path) -> dict:
     marker = snapshot_dir / "snapshot.json"
     if not marker.exists():
         raise FileNotFoundError(f"{snapshot_dir} holds no complete snapshot (no snapshot.json)")
-    settled = settled_generations(snapshot_dir / DB)
+    last = last_program_generation(snapshot_dir / DB)
     results_dir.mkdir(parents=True, exist_ok=True)
     for f in snapshot_dir.iterdir():
         if f.name.startswith(".") or f.name == "snapshot.json":
             continue
-        if f.is_dir() and f.name.startswith("gen_") and f.name[4:].isdigit() and int(f.name[4:]) not in settled:
-            shutil.rmtree(f)                        # stale: not in the database it belongs with
+        if f.is_dir() and f.name.startswith("gen_") and f.name[4:].isdigit() and int(f.name[4:]) > last:
+            shutil.rmtree(f)                        # its number will be used again: not in the database's past
         elif f.is_dir():
             shutil.copytree(f, results_dir / f.name, copy_function=shutil.copyfile)
         else:
             shutil.copyfile(f, results_dir / f.name)
-    return {**json.loads(marker.read_text()), "max_generation": max(settled, default=0)}
+    return {**json.loads(marker.read_text()), "max_generation": last}
 
 
 class Snapshotter:

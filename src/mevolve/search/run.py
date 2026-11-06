@@ -372,9 +372,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume:
         restored = snapshot.restore(Path(config["snapshot_dir"]), results_dir)
         if restored["max_generation"] == 0:     # no proposal yet: Shinka would score the template again
-            print("the snapshot holds no proposal yet: starting afresh", flush=True)
-            shutil.rmtree(results_dir)
-            results_dir.mkdir(parents=True)
+            print("the snapshot holds no proposal yet: starting afresh, keeping its ledger", flush=True)
+            for f in results_dir.iterdir():     # the ledger stays: its calls were paid for
+                if f.name != "ledger.jsonl":
+                    shutil.rmtree(f) if f.is_dir() else f.unlink()
             args.resume = False
         else:
             print(f"resumed from {config['snapshot_dir']}: {restored['programs']} programs", flush=True)
@@ -414,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
                   flush=True)
             run_failed = False
         finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)     # a late SIGTERM must not cut the cleanup short
             if snapshots:
                 snapshots.final()
             end_of_run(config, results_dir, run_failed, args.dry)
