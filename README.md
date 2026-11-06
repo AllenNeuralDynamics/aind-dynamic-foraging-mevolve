@@ -83,6 +83,15 @@ rule is met, no new proposals start; running evaluations and Claude calls finish
 under the dollar cap, and `stop_rule.json` (and `run_summary.json`) say the rule ended the run. The rule
 is read from the database each time (`mevolve.search.stopping`), so a resumed run gets the same answer.
 
+**Snapshots and resume** (`snapshot_minutes`, `snapshot_dir`, `--resume`; #65). The database lives on the
+first node's local disk until the end of the run. With `snapshot_minutes`, a consistent copy of it
+(SQLite's backup API), the run's small files (ledger, bandit state, configs) and every settled `gen_*`
+directory go to `snapshot_dir` on shared disk (not inside `out_dir`). At SIGTERM the snapshot is taken
+first; give the job `--signal=B:TERM@120` and forward it from the batch script to the search. A new
+job with the same config and `--resume` fills a fresh `results_dir` from the snapshot and continues:
+Shinka restores its generation counter and spent dollars from the database, and the dollar cap reads
+the restored ledger. Programs that finished after the last snapshot are proposed again.
+
 ## What it does
 
 - An LLM (Claude) proposes **programs**: short JAX modules that predict each choice of a mouse
