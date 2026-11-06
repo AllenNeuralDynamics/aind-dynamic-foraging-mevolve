@@ -72,15 +72,21 @@ def test_the_runner_reports_the_cap_once_the_rule_is_met(tmp_path, monkeypatch):
         def _get_committed_cost(self):
             return 3.0
 
+        def _get_completed_job_work_count(self):
+            return self.pending
+
     monkeypatch.setattr(run, "STOP_CHECK_SECONDS", 0)
     make_db(tmp_path / "programs.sqlite", [72.0], [(1, 1, 72.01), (2, 2, None)], [])
     runner = run.stopping_runner(Base)()
-    runner.stop_rule = (tmp_path, SE, 3)
+    runner.stop_rule, runner.pending = (tmp_path, SE, 3), 0
     assert runner._get_committed_cost() == 3.0                     # two proposals without a rise: not yet
     con = sqlite3.connect(tmp_path / "programs.sqlite")
     con.execute("INSERT INTO programs VALUES (3, 3, 72.02, 1)")
     con.commit()
     con.close()
+    runner.pending = 1
+    assert runner._get_committed_cost() == 3.0                     # finished work not yet recorded: wait
+    runner.pending = 0
     assert runner._get_committed_cost() == 450.0                   # three: the cap, so Shinka drains and stops
     record = json.loads((tmp_path / "stop_rule.json").read_text())
     assert record["met"] and record["since_rise"] == 3 and record["anchor"] == 72.0
@@ -120,6 +126,9 @@ def test_a_run_the_dollar_cap_ended_is_not_put_down_to_the_rule(tmp_path, monkey
 
         def _get_committed_cost(self):
             return 450.0
+
+        def _get_completed_job_work_count(self):
+            return 0
 
     monkeypatch.setattr(run, "STOP_CHECK_SECONDS", 0)
     make_db(tmp_path / "programs.sqlite", [72.0], [(1, 1, 72.0), (2, 2, 72.0), (3, 3, 72.0)], [])

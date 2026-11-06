@@ -240,6 +240,8 @@ def stopping_runner(base):
                 return self._stopped is not None
             if getattr(self, "cost_limit_reached", False) or cost >= self.evo_config.max_api_costs:
                 return False            # the dollar cap ended the run first: the rule is not its cause
+            if self._get_completed_job_work_count() > 0 or getattr(self, "failed_jobs_for_retry", None):
+                return False            # finished work not yet in the database could be a rise: check later
             if time.monotonic() - self._checked < STOP_CHECK_SECONDS:
                 return False
             self._checked = time.monotonic()
