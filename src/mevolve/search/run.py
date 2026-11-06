@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -50,6 +51,7 @@ DEFAULTS = {
     "eval_launch": "local",     # "local": evaluations on this node; "srun": on any node of the allocation (#59)
     "stage_dir": None,          # with "srun": a directory every node reads, for staged programs and the repeat cache
     "embedding_python": None,   # a Python with torch and transformers: code embeddings, observed only (#56)
+    "snapshot_minutes": None, "snapshot_dir": None,     # snapshots on shared disk, for --resume (#65)
     "stop_se": None, "stop_window": None,   # stopping rule (#63): stop after stop_window proposals without the
                                             # best rising more than stop_se above its anchor; both or neither
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
@@ -65,7 +67,8 @@ def load_config(path: Path) -> dict:
             raise ValueError(f"{key} has an unset variable: {value}")
         return out
 
-    for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts", "embedding_python", "stage_dir"):
+    for key in ("results_dir", "out_dir", "seed_cache", "freeze", "cohorts", "embedding_python", "stage_dir",
+                "snapshot_dir"):
         if config[key]:
             config[key] = expand(key, config[key])
     config["seeds"] = [expand("seeds", s) for s in config["seeds"]]      # literature names or program files
@@ -84,6 +87,10 @@ def load_config(path: Path) -> dict:
     missing = [k for k in ("results_dir", "out_dir") + data_keys if not config[k]]
     if missing:
         raise ValueError(f"config needs {missing}")
+    if (config["snapshot_minutes"] is None) != (config["snapshot_dir"] is None):
+        raise ValueError("snapshots need both snapshot_minutes and snapshot_dir, or neither")
+    if config["snapshot_dir"] and Path(config["snapshot_dir"]).resolve().is_relative_to(Path(config["out_dir"]).resolve()):
+        raise ValueError("snapshot_dir must not be inside out_dir (the archive would hold the database twice)")
     if (config["stop_se"] is None) != (config["stop_window"] is None):
         raise ValueError("the stopping rule needs both stop_se and stop_window, or neither")
     if config["stop_window"] is not None and not (isinstance(config["stop_window"], int) and not isinstance(
@@ -330,10 +337,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one MEvolve search on ShinkaEvolve")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dry", action="store_true", help="evaluate and place the seeds, build the runner, stop")
+    parser.add_argument("--resume", action="store_true",
+                        help="continue a run from its snapshot_dir in a fresh results_dir (#65)")
     parser.add_argument("--fake-llm", action="store_true",
                         help="a $0 rehearsal: canned full rewrites instead of Claude (use patch_types [\"full\"])")
     args = parser.parse_args(argv)
     config = load_config(args.config)
+    if args.resume and not config["snapshot_dir"]:
+        sys.exit("--resume needs the run's snapshot_dir")
+    if args.resume and config["wandb"]:
+        config["wandb"] = {**config["wandb"], "name": f"{config['wandb'].get('name') or 'run'}-resumed"}
     if args.fake_llm or args.dry:       # neither calls Claude, but Shinka's runner checks the variable exists
         os.environ.setdefault("ANTHROPIC_API_KEY", "fake")
     if not args.dry and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -348,16 +361,20 @@ def main(argv: list[str] | None = None) -> int:
     if results_dir.exists() and any(results_dir.iterdir()):
         sys.exit(f"{results_dir} is not empty; a run starts in a fresh directory")
     results_dir.mkdir(parents=True, exist_ok=True)
-    (results_dir / "run_config.json").write_text(json.dumps(config, indent=1) + "\n")
+    from . import claude, prompt, seeds, snapshot
 
-    from . import claude, prompt, seeds
+    if args.resume:
+        restored = snapshot.restore(Path(config["snapshot_dir"]), results_dir)
+        print(f"resumed from {config['snapshot_dir']}: {restored['programs']} programs", flush=True)
+    (results_dir / "run_config.json").write_text(json.dumps(config, indent=1) + "\n")
+    signal.signal(signal.SIGTERM, _terminate)       # the time limit or scancel: a last snapshot, then the end of run
 
     write_pricing_snapshot(results_dir)
     task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]),
                                        config["max_params"], config["max_latent"])
     with embedding_server(config["embedding_python"]) as embedding_model:     # first: a bad setup fails before any fit
         placed = []
-        for island, seed in enumerate(config["seeds"], start=1):
+        for island, seed in enumerate([] if args.resume else config["seeds"], start=1):     # placed before a resume
             name, code = seeds.seed_name_and_source(seed)
             placed.append({"name": name, "code": code, "island": island, "metrics": seed_metrics(name, code, config)})
             print(f"seed {name} on island {island}: {placed[-1]['metrics']['combined_score']:.3f}", flush=True)
@@ -368,10 +385,14 @@ def main(argv: list[str] | None = None) -> int:
             install_fake_llm(results_dir / "ledger.jsonl")
         seeds.install_island_patch()
         from shinka.database import DatabaseConfig
-        run_failed = True
+        run_failed, snapshots = True, None
         try:
-            seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
+            if not args.resume:
+                seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
             runner, _ = build_runner(config, task_message, embedding_model)
+            if config["snapshot_minutes"] and not args.dry:
+                snapshots = snapshot.Snapshotter(results_dir, Path(config["snapshot_dir"]), config["snapshot_minutes"]).start()
+                _AT_TERM.append(snapshots.take_now)
             if not args.dry:
                 runner.run()
             summary = summarize(config, started)
@@ -381,8 +402,19 @@ def main(argv: list[str] | None = None) -> int:
                   flush=True)
             run_failed = False
         finally:        # results_dir is node-local: keep the database, logs and ledger even if the run failed
+            if snapshots:
+                snapshots.final()
             end_of_run(config, results_dir, run_failed, args.dry)
     return 0
+
+
+_AT_TERM: list = []     # run first at SIGTERM, before the search unwinds (Slurm kills it soon after)
+
+
+def _terminate(signum, frame):
+    for action in _AT_TERM:
+        action()
+    raise KeyboardInterrupt(f"signal {signum}")      # unwinds through main's finally: snapshot, copy, archive
 
 
 @contextlib.contextmanager
