@@ -232,11 +232,13 @@ def stopping_runner(base):
 
         def _get_committed_cost(self) -> float:
             cost = super()._get_committed_cost()
-            return max(cost, self.evo_config.max_api_costs) if self._stop_rule_met() else cost
+            return max(cost, self.evo_config.max_api_costs) if self._stop_rule_met(cost) else cost
 
-        def _stop_rule_met(self) -> bool:
+        def _stop_rule_met(self, cost: float) -> bool:
             if self._stopped is not None or self.stop_rule is None:
                 return self._stopped is not None
+            if getattr(self, "cost_limit_reached", False) or cost >= self.evo_config.max_api_costs:
+                return False            # the dollar cap ended the run first: the rule is not its cause
             if time.monotonic() - self._checked < STOP_CHECK_SECONDS:
                 return False
             self._checked = time.monotonic()

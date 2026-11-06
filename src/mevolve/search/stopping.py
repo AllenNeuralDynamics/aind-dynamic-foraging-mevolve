@@ -6,7 +6,7 @@ in the order they finished, each generation once: a program of generation > 0 (s
 proposal that left no program (``attempt_log``, ``failed_proposal``). A proposal scoring strictly above
 anchor + ``se`` becomes the anchor and resets the count; any other proposal adds one. Small rises are
 measured against the anchor, so they count once their total passes ``se``. The rule is met when the
-count reaches ``window``.
+count first reaches ``window``; proposals that finish after that (the drain) do not undo it.
 
 It is computed from the database each time, so a resumed run gets the same answer.
 """
@@ -25,7 +25,10 @@ def plateau(anchor: float, finished: list[float | None], se: float, window: int)
             rises.append({"proposal": i, "score": score})
         else:
             since += 1
-    return {"met": since >= window, "anchor": anchor, "since_rise": since, "proposals": len(finished),
+        if since >= window:          # met here: what finished later (the drain) cannot undo it
+            return {"met": True, "met_at_proposal": i, "anchor": anchor, "since_rise": since,
+                    "proposals": len(finished), "rises": rises, "se": se, "window": window}
+    return {"met": False, "anchor": anchor, "since_rise": since, "proposals": len(finished),
             "rises": rises, "se": se, "window": window}
 
 
@@ -36,6 +39,7 @@ def from_database(db_path: Path, se: float, window: int) -> dict:
         return {"met": False, "reason": "no database yet"}
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
     try:
+        con.execute("BEGIN")        # one read transaction: the three queries see the same moment
         start = con.execute("SELECT MAX(combined_score) FROM programs WHERE generation = 0 AND correct").fetchone()[0]
         rows = con.execute("SELECT generation, timestamp, CASE WHEN correct THEN combined_score END "
                            "FROM programs WHERE generation > 0").fetchall()

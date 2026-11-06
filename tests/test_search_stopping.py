@@ -97,3 +97,28 @@ def test_config_needs_both_stop_settings(tmp_path):
         run.load_config(path)
     path.write_text(json.dumps({**base, "stop_se": 0.05, "stop_window": 2000}))
     assert run.load_config(path)["stop_window"] == 2000
+
+
+def test_the_first_time_the_rule_is_met_stands():
+    state = stopping.plateau(72.0, [72.0, 72.0, 72.0, 72.2], SE, 3)      # a rise after the window
+    assert state["met"] and state["met_at_proposal"] == 3 and state["anchor"] == 72.0
+
+
+def test_a_run_the_dollar_cap_ended_is_not_put_down_to_the_rule(tmp_path, monkeypatch):
+    pytest.importorskip("shinka")
+    from mevolve.search import run
+
+    class Base:
+        cost_limit_reached = True
+
+        def __init__(self):
+            self.evo_config = types.SimpleNamespace(max_api_costs=450.0)
+
+        def _get_committed_cost(self):
+            return 450.0
+
+    monkeypatch.setattr(run, "STOP_CHECK_SECONDS", 0)
+    make_db(tmp_path / "programs.sqlite", [72.0], [(1, 1, 72.0), (2, 2, 72.0), (3, 3, 72.0)], [])
+    runner = run.stopping_runner(Base)()
+    runner.stop_rule = (tmp_path, SE, 3)
+    assert runner._get_committed_cost() == 450.0 and not (tmp_path / "stop_rule.json").exists()
