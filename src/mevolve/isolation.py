@@ -12,7 +12,11 @@ of the process, so every program the worker runs later is covered. From then on,
   (``sys.prefix``, ``sys.path``: the lazy imports a fit does), the program's own directory, ``/dev``
   and ``/sys``: the key files in the home directory, and other processes' start-up environments under
   ``/proc``, are out of reach;
+- ``open`` with a relative path fails (it may be relative to a directory descriptor the hook cannot see);
 - sockets, subprocesses, ``exec``-family calls, ``fork``, ``ctypes`` and file system changes fail.
+
+Results and errors come back from workers as JSON (``evaluate.json_call``), never as pickles a
+candidate could shape.
 
 Measured on 2026-11-05: fitting a program raised only reads under the environment's library
 directory (lazy imports of scipy, numpy and others), no writes, no sockets, no ``ctypes``.
@@ -60,6 +64,8 @@ def install(program_path: Path | str) -> None:
             if writes:
                 raise PermissionError(f"evaluation isolation: no file writes ({path})")
             if isinstance(path, (str, bytes, os.PathLike)):
+                if not os.path.isabs(os.fsdecode(path)):    # relative to an unknown dir_fd: not checkable
+                    raise PermissionError(f"evaluation isolation: relative path {path!r}")
                 full = os.path.realpath(os.fsdecode(path)) + "/"
                 if not full.startswith(roots):
                     raise PermissionError(f"evaluation isolation: {path} is outside the allowed paths")

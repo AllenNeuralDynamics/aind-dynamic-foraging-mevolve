@@ -27,6 +27,7 @@ PROBE = textwrap.dedent("""
     attempt("socket", lambda: socket.create_connection(("127.0.0.1", 9), timeout=1))
     attempt("subprocess", lambda: subprocess.run(["true"]))
     attempt("lazy_import", lambda: __import__("tomllib"))
+    attempt("relative_path", lambda: open("notes.txt").read())
     import os
     attempt("parent_environ", lambda: open(f"/proc/{os.getppid()}/environ").read())
     print(json.dumps(out))
@@ -45,7 +46,7 @@ def test_the_hook_denies_files_writes_network_and_processes(tmp_path):
                        capture_output=True, text=True, check=True)
     assert json.loads(r.stdout) == {"read_secret": "denied", "read_program_dir": "ok", "write_program_dir": "denied",
                                     "socket": "denied", "subprocess": "denied", "lazy_import": "ok",
-                                    "parent_environ": "denied"}
+                                    "parent_environ": "denied", "relative_path": "denied"}
 
 
 def test_a_program_that_escapes_the_static_checks_cannot_read_a_key_in_a_worker(tmp_path):
@@ -85,3 +86,23 @@ def test_the_search_loads_a_candidate_only_in_an_isolated_worker(tmp_path):
     bad.write_text(good.read_text() + f"\n_stolen = open({str(secret)!r}).read()\n")
     with pytest.raises(PermissionError, match="evaluation isolation"):
         shinka_eval.inspect_isolated(bad, shape)
+
+
+def test_only_json_crosses_back_from_the_isolated_worker(tmp_path):
+    pytest.importorskip("shinka")
+    from mevolve.search import shinka_eval
+    from mevolve.search.checks import check_source
+
+    marker = tmp_path / "unpickled_in_the_parent"
+    (tmp_path / "prog").mkdir()
+    good = (program.LITERATURE_DIR / "hattori2019.py").read_text()
+    path = tmp_path / "prog" / "sly.py"
+    # a parameter name whose pickle would run code where it is unpickled (the static checks reject classes)
+    path.write_text(good + f"""
+class _Name(str):
+    def __reduce__(self):
+        return (open, ({str(marker)!r}, "w"))
+PARAMS = {{_Name(k): v for k, v in PARAMS.items()}}
+""")
+    bounds = shinka_eval.inspect_isolated(path, check_source(good))
+    assert not marker.exists() and all(type(k) is str for k in bounds)

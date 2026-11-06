@@ -130,7 +130,7 @@ def _inspect(program_path: str, shape: dict) -> dict:
         raise ProgramRejected(f"the loaded program has {len(prog.params)} parameters and {prog.n_latent} latent "
                               f"variables, not the {shape['n_params']} and {shape['n_latent']} its literals declare")
     check_shapes(prog)
-    return prog.params
+    return {str(k): [float(lo), float(hi)] for k, (lo, hi) in prog.params.items()}
 
 
 def inspect_isolated(program_path: Path, shape: dict) -> dict:
@@ -142,7 +142,8 @@ def inspect_isolated(program_path: Path, shape: dict) -> dict:
     from mevolve.search import shinka_eval      # by module name, so the worker can import it
 
     with mp.get_context("spawn").Pool(1, initializer=evaluate._die_with_parent) as pool:
-        return pool.apply(shinka_eval._inspect, (str(program_path), shape))
+        bounds = evaluate.from_json(pool.apply(evaluate.json_call, (shinka_eval._inspect, (str(program_path), shape))))
+    return {k: tuple(v) for k, v in bounds.items()}
 
 
 def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: Path | None, generation: str | None,
@@ -170,7 +171,7 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
         val_subjects = [evaluate.subject_data(freeze, s) for s in cohorts[validation]]
     subjects = gen_subjects + val_subjects
     records = evaluate.evaluate(program_path, subjects, regime="2level", workers=workers, max_em=max_em,
-                                n_draws=n_draws)
+                                n_draws=n_draws, isolate=True)        # a pool even of one: never unisolated here
     gen_records, val_records = records[:len(gen_subjects)], records[len(gen_subjects):]
     val_score, gen_score = evaluate.program_score(val_records), evaluate.program_score(gen_records)
     seconds = [r["seconds"] for r in records]
