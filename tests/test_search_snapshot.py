@@ -109,6 +109,10 @@ def test_config_checks_the_snapshot_settings(tmp_path):
     path.write_text(json.dumps({**base, "snapshot_minutes": 10, "snapshot_dir": str(tmp_path / "out" / "snap")}))
     with pytest.raises(ValueError, match="inside out_dir"):
         run.load_config(path)
+    for bad in (0, -5):
+        path.write_text(json.dumps({**base, "snapshot_minutes": bad, "snapshot_dir": str(tmp_path / "snap")}))
+        with pytest.raises(ValueError, match="finite number above 0"):
+            run.load_config(path)
     path.write_text(json.dumps({**base, "snapshot_minutes": 10, "snapshot_dir": str(tmp_path / "snap")}))
     assert run.load_config(path)["snapshot_minutes"] == 10
 
@@ -119,6 +123,39 @@ def test_sigterm_takes_the_snapshot_before_the_search_unwinds(monkeypatch):
 
     done = []
     monkeypatch.setattr(run, "_AT_TERM", [lambda: done.append("snapshot")])
+    monkeypatch.setattr(run, "_TERMINATING", [])
     with pytest.raises(KeyboardInterrupt):
         run._terminate(15, None)
+    run._terminate(15, None)                    # a second signal: ignored, no second snapshot
     assert done == ["snapshot"]
+
+
+def test_take_now_does_not_wait_on_a_snapshot_under_way(tmp_path):
+    make_run(tmp_path / "run").close()
+    s = snapshot.Snapshotter(tmp_path / "run", tmp_path / "snap", minutes=60)
+    with s._lock:                               # e.g. final() interrupted by the signal in the same thread
+        s.take_now()                            # returns at once instead of deadlocking
+    assert not (tmp_path / "snap" / "snapshot.json").exists()
+    s.take_now()
+    assert (tmp_path / "snap" / "snapshot.json").exists()
+
+
+def test_the_database_is_replaced_last(tmp_path, monkeypatch):
+    con = make_run(tmp_path / "run")
+    snapshot.take(tmp_path / "run", tmp_path / "snap")
+    con.execute("INSERT INTO programs (generation, code) VALUES (4, 'z')")
+    con.commit()
+    con.close()
+    (tmp_path / "run" / "ledger.jsonl").write_text('{"cost": 0.5}\n{"cost": 0.7}\n')
+    real = snapshot.shutil.copytree
+
+    def fail(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(snapshot.shutil, "copytree", fail)
+    with pytest.raises(OSError):
+        snapshot.take(tmp_path / "run", tmp_path / "snap")
+    monkeypatch.setattr(snapshot.shutil, "copytree", real)
+    check = sqlite3.connect(tmp_path / "snap" / "programs.sqlite")
+    assert check.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 3    # the old database
+    check.close()
+    assert (tmp_path / "snap" / "ledger.jsonl").read_text().count("cost") == 2    # a newer ledger

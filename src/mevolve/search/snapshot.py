@@ -5,8 +5,8 @@ to ``out_dir`` only at the end. A snapshot copies, to ``snapshot_dir``: the data
 backup API (one consistent file, even while the search writes); the run's small top-level files (the
 ledger, Shinka's bandit state, the configs, ``stop_rule.json``); and every settled ``gen_*`` directory,
 that is one whose generation is in the copied database or left no program. Each piece is replaced
-whole (the ledger after the database, so it never undercounts the database's calls); ``snapshot.json``
-is written last, and a directory without it was never completed.
+whole, and the database last, so a snapshot cut short still has a ledger and directories at least as
+new as its database; ``snapshot.json`` is written last, and a directory without it was never completed.
 
 ``restore`` fills a fresh ``results_dir`` from a snapshot; Shinka then resumes the database (it restores
 its generation counter and its spent dollars from it), and MEvolve's Claude wrapper reads the restored
@@ -32,9 +32,14 @@ def _copy_file(src: Path, dst: Path) -> None:
 
 
 def take(results_dir: Path, dest: Path) -> dict:
-    """One snapshot of ``results_dir`` into ``dest``; returns what ``snapshot.json`` records."""
+    """One snapshot of ``results_dir`` into ``dest``; returns what ``snapshot.json`` records.
+
+    The database is copied first to a side file, then the ledger and small files, then the settled
+    generation directories, and only then does the new database replace the old one: a snapshot cut
+    short keeps its previous database with a ledger and files at least as new, so a resume never
+    undercounts the dollars spent or misses a program's directory."""
     results_dir, dest = Path(results_dir), Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)       # each piece is replaced whole, so a snapshot stays usable
+    dest.mkdir(parents=True, exist_ok=True)
     part = dest / f".{DB}.part"
     src = sqlite3.connect(f"file:{results_dir / DB}?mode=ro", uri=True, timeout=60)
     try:
@@ -47,7 +52,6 @@ def take(results_dir: Path, dest: Path) -> dict:
         out.close()
     finally:
         src.close()
-    os.replace(part, dest / DB)
     for f in results_dir.iterdir():
         if f.is_file() and not f.name.startswith(DB):
             _copy_file(f, dest / f.name)
@@ -57,9 +61,16 @@ def take(results_dir: Path, dest: Path) -> dict:
             shutil.copytree(d, dest / f".{d.name}.part", copy_function=shutil.copyfile, dirs_exist_ok=True)
             os.replace(dest / f".{d.name}.part", dest / d.name)
             copied += 1
+    os.replace(part, dest / DB)                     # last: the database never runs ahead of the ledger
     record = {"time": time.time(), "programs": n_programs, "generations": len(settled), "gen_dirs_copied": copied}
-    (dest / "snapshot.json").write_text(json.dumps(record) + "\n")
+    _write_text(dest / "snapshot.json", json.dumps(record) + "\n")
     return record
+
+
+def _write_text(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.part")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def restore(snapshot_dir: Path, results_dir: Path) -> dict:
@@ -104,9 +115,20 @@ class Snapshotter:
             self._take()
 
     def take_now(self) -> None:
-        """A snapshot now, in the calling thread (the SIGTERM handler: before the search unwinds)."""
-        print("snapshot at SIGTERM", flush=True)
-        self._take()
+        """A snapshot now, in the calling thread (the SIGTERM handler: before the search unwinds). If a
+        snapshot is already being taken (the background one, or ``final`` interrupted by the signal), it is
+        left to finish instead: waiting on the lock from inside a handler could deadlock."""
+        if not self._lock.acquire(blocking=False):
+            print("snapshot at SIGTERM: one is already being taken", flush=True)
+            return
+        try:
+            print("snapshot at SIGTERM", flush=True)
+            record = take(self.results_dir, self.dest)
+            print(f"snapshot: {record['programs']} programs to {self.dest}", flush=True)
+        except Exception as e:      # noqa: BLE001 - the handler must still end the run
+            print(f"snapshot failed: {type(e).__name__}: {e}", flush=True)
+        finally:
+            self._lock.release()
 
     def final(self) -> None:
         self._stop.set()

@@ -23,6 +23,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -89,6 +90,11 @@ def load_config(path: Path) -> dict:
         raise ValueError(f"config needs {missing}")
     if (config["snapshot_minutes"] is None) != (config["snapshot_dir"] is None):
         raise ValueError("snapshots need both snapshot_minutes and snapshot_dir, or neither")
+    if config["snapshot_minutes"] is not None and not (isinstance(config["snapshot_minutes"], (int, float))
+                                                       and not isinstance(config["snapshot_minutes"], bool)
+                                                       and math.isfinite(config["snapshot_minutes"])
+                                                       and config["snapshot_minutes"] > 0):
+        raise ValueError("snapshot_minutes must be a finite number above 0")
     if config["snapshot_dir"] and Path(config["snapshot_dir"]).resolve().is_relative_to(Path(config["out_dir"]).resolve()):
         raise ValueError("snapshot_dir must not be inside out_dir (the archive would hold the database twice)")
     if (config["stop_se"] is None) != (config["stop_window"] is None):
@@ -411,7 +417,13 @@ def main(argv: list[str] | None = None) -> int:
 _AT_TERM: list = []     # run first at SIGTERM, before the search unwinds (Slurm kills it soon after)
 
 
+_TERMINATING: list = []
+
+
 def _terminate(signum, frame):
+    if _TERMINATING:            # a repeated signal: the first one's snapshot and unwinding are under way
+        return
+    _TERMINATING.append(signum)
     for action in _AT_TERM:
         action()
     raise KeyboardInterrupt(f"signal {signum}")      # unwinds through main's finally: snapshot, copy, archive
