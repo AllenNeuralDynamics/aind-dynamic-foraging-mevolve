@@ -109,8 +109,7 @@ def load_config(path: Path) -> dict:
         raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local', 'srun' or 'job'")
     if config["eval_launch"] in ("srun", "job") and not config["stage_dir"]:
         raise ValueError(f"eval_launch {config['eval_launch']!r} needs a stage_dir every node can read")
-    if config["eval_launch"] == "job" and any(a.split("=")[0] in ("--time", "-t", "--cpus-per-task", "-c")
-                                              for a in config["eval_job_args"]):
+    if config["eval_launch"] == "job" and any(sets_time_or_cpus(a) for a in config["eval_job_args"]):
         raise ValueError("eval_job_args must not set the time (eval_time does) or the CPUs (2 x workers do)")
     cpus = os.cpu_count() or 1
     if config["eval_launch"] == "srun":     # each evaluation is one step of 2 x workers CPUs on one node
@@ -300,11 +299,22 @@ def srun_python(results_dir: Path, stage_dir: Path, workers: int, job_args: list
 
     path = results_dir / "srun_python"
     py = shlex.quote(sys.executable)
-    own = f"--job-args {shlex.quote(shlex.join(job_args))} " if job_args is not None else ""
+    own = f"--job-args={shlex.quote(shlex.join(job_args))} " if job_args is not None else ""   # '=': a value
+                                                                    # starting with '-' is not read as an option
     path.write_text(f"#!/bin/sh\nexec {py} -m mevolve.search.srun_eval --stage-dir {shlex.quote(str(stage_dir))} "
                     f"--cpus {2 * workers} {own}-- {py} \"$@\"\n")
     path.chmod(0o755)
     return str(path)
+
+
+def sets_time_or_cpus(arg: str) -> bool:
+    """Whether an srun option sets the time limit or the CPUs per task: long forms and their abbreviations
+    (``--time``, ``--ti``, ``--cpus-per-task``, ``--cpus-per-t``), and short forms, attached or not (``-t``,
+    ``-t60``, ``-c``, ``-c8``)."""
+    key = arg.split("=")[0]
+    if key.startswith("--"):
+        return len(key) > 3 and ("--time".startswith(key) or "--cpus-per-task".startswith(key))
+    return key[:2] in ("-t", "-c")
 
 
 def add_times(a: str, b: str) -> str:

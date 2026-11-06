@@ -236,7 +236,7 @@ def test_the_runner_starts_own_job_evaluations_and_lets_them_queue(tmp_path, mon
     with pytest.raises(Stop):
         search_run.build_runner(config, "TASK")
     wrapper = (tmp_path / "r" / "srun_python").read_text()
-    assert "--cpus 24 --job-args '--partition=aind --mem-per-cpu=1500M --time=02:00:00' --" in wrapper
+    assert "--cpus 24 --job-args='--partition=aind --mem-per-cpu=1500M --time=02:00:00' --" in wrapper
     assert seen["time"] == "14:30:00"             # Shinka's clock: the run's limit plus the queue
 
 
@@ -252,7 +252,8 @@ def test_job_mode_needs_a_stage_dir_owns_time_and_cpus_and_ignores_the_allocatio
     path.write_text(json.dumps(base))
     with pytest.raises(ValueError, match="stage_dir"):
         search_run.load_config(path)
-    for bad in (["--time=01:00:00"], ["-c", "8"], ["--cpus-per-task=8"]):
+    for bad in (["--time=01:00:00"], ["-c", "8"], ["--cpus-per-task=8"], ["-c8"], ["-t60"], ["--ti=60"],
+                ["--cpus-per-t=8"]):
         path.write_text(json.dumps({**base, "stage_dir": "/s", "eval_job_args": bad}))
         with pytest.raises(ValueError, match="eval_job_args"):
             search_run.load_config(path)
@@ -263,3 +264,32 @@ def test_job_mode_needs_a_stage_dir_owns_time_and_cpus_and_ignores_the_allocatio
 def test_times_add_past_a_day():
     from mevolve.search.run import add_times
     assert add_times("02:00:00", "23:30:45") == "25:30:45"
+
+
+def test_the_wrapper_passes_default_job_args_that_start_with_a_dash(tmp_path, monkeypatch):
+    # with eval_job_args [] the value is "--time=...": argparse must read it as the value of --job-args
+    import shlex
+    import subprocess
+
+    from mevolve.search import run as search_run
+
+    tmp_path.joinpath("bin").mkdir()
+    executable(tmp_path / "bin" / "srun", FAKE_SRUN)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_SRUN_LOG", str(tmp_path / "srun"))
+    gen = tmp_path / "gen_1"
+    gen.mkdir()
+    (gen / "main.py").write_text("x = 1\n")
+    (tmp_path / "eval.py").write_text(FAKE_EVAL)
+    wrapper = search_run.srun_python(tmp_path, tmp_path / "stage", 12, ["--time=02:00:00"])
+    r = subprocess.run([wrapper, str(tmp_path / "eval.py"), "--program_path", str(gen / "main.py"),
+                        "--results_dir", str(gen / "results"), "--exit", "0"],
+                       env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "--time=02:00:00" in (tmp_path / "srun.args").read_text().split()
+
+
+def test_only_time_and_cpu_options_are_refused():
+    from mevolve.search.run import sets_time_or_cpus
+    assert all(map(sets_time_or_cpus, ["-t", "-t60", "-c", "-c8", "--time=1", "--tim", "--cpus-per-task=2", "--cpus-per-ta"]))
+    assert not any(map(sets_time_or_cpus, ["--partition=aind", "--mem-per-cpu=1500M", "--constraint=cpu", "-p", "--cpus-per-gpu=2"]))
