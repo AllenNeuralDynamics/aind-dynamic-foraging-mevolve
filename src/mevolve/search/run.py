@@ -308,13 +308,13 @@ def srun_python(results_dir: Path, stage_dir: Path, workers: int, job_args: list
 
 
 def sets_time_or_cpus(arg: str) -> bool:
-    """Whether an srun option sets the time limit or the CPUs per task: long forms and their abbreviations
-    (``--time``, ``--ti``, ``--cpus-per-task``, ``--cpus-per-t``), and short forms, attached or not (``-t``,
-    ``-t60``, ``-c``, ``-c8``)."""
+    """Whether an srun option may set the time limit or the CPUs per task: long forms and their abbreviations
+    (``--time``, ``--ti``, ``--cpus-per-task``, ``--cpus-per-t``), and any short-option group holding ``t`` or
+    ``c`` (``-t60``, ``-c8``, ``-vc8``). A short group is refused whole, so pass other options in long form."""
     key = arg.split("=")[0]
     if key.startswith("--"):
         return len(key) > 3 and ("--time".startswith(key) or "--cpus-per-task".startswith(key))
-    return key[:2] in ("-t", "-c")
+    return key.startswith("-") and any(ch in "tc" for ch in key[1:])
 
 
 def add_times(a: str, b: str) -> str:

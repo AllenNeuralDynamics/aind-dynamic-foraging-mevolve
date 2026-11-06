@@ -291,5 +291,6 @@ def test_the_wrapper_passes_default_job_args_that_start_with_a_dash(tmp_path, mo
 
 def test_only_time_and_cpu_options_are_refused():
     from mevolve.search.run import sets_time_or_cpus
-    assert all(map(sets_time_or_cpus, ["-t", "-t60", "-c", "-c8", "--time=1", "--tim", "--cpus-per-task=2", "--cpus-per-ta"]))
+    assert all(map(sets_time_or_cpus, ["-t", "-t60", "-c", "-c8", "-vc8", "-vt60", "--time=1", "--tim",
+                                        "--cpus-per-task=2", "--cpus-per-ta"]))
     assert not any(map(sets_time_or_cpus, ["--partition=aind", "--mem-per-cpu=1500M", "--constraint=cpu", "-p", "--cpus-per-gpu=2"]))
