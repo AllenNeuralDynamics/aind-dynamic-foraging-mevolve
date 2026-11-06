@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -49,6 +50,8 @@ DEFAULTS = {
     "eval_launch": "local",     # "local": evaluations on this node; "srun": on any node of the allocation (#59)
     "stage_dir": None,          # with "srun": a directory every node reads, for staged programs and the repeat cache
     "embedding_python": None,   # a Python with torch and transformers: code embeddings, observed only (#56)
+    "stop_se": None, "stop_window": None,   # stopping rule (#63): stop after stop_window proposals without the
+                                            # best rising more than stop_se above its anchor; both or neither
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
 }
@@ -81,6 +84,11 @@ def load_config(path: Path) -> dict:
     missing = [k for k in ("results_dir", "out_dir") + data_keys if not config[k]]
     if missing:
         raise ValueError(f"config needs {missing}")
+    if (config["stop_se"] is None) != (config["stop_window"] is None):
+        raise ValueError("the stopping rule needs both stop_se and stop_window, or neither")
+    if config["stop_window"] is not None and not (isinstance(config["stop_window"], int) and not isinstance(
+            config["stop_window"], bool) and config["stop_window"] >= 1 and config["stop_se"] >= 0):
+        raise ValueError("stop_window must be a whole number >= 1 and stop_se >= 0")
     if config["eval_launch"] not in ("local", "srun"):
         raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local' or 'srun'")
     if config["eval_launch"] == "srun" and not config["stage_dir"]:
@@ -201,9 +209,56 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
                         "max_params": config["max_params"], "max_latent": config["max_latent"]})
     db = DatabaseConfig(num_islands=1 + len(config["seeds"]), archive_size=config["archive_size"],
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
-    runner = ShinkaEvolveRunner(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
-                                max_proposal_jobs=config["max_proposal_jobs"], max_db_workers=2)
+    runner_class = ShinkaEvolveRunner if config["stop_window"] is None else stopping_runner(ShinkaEvolveRunner)
+    runner = runner_class(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
+                          max_proposal_jobs=config["max_proposal_jobs"], max_db_workers=2)
+    if config["stop_window"] is not None:
+        runner.stop_rule = (results_dir, float(config["stop_se"]), int(config["stop_window"]))
     return runner, db
+
+
+STOP_CHECK_SECONDS = 30
+
+
+def stopping_runner(base):
+    """Shinka's runner with the stopping rule (#63). Once the rule is met, the money committed reads as the
+    dollar cap, so Shinka takes the path of its own cap: no new proposals, running evaluations and Claude
+    calls finish and are recorded, then the run ends. ``stop_rule.json`` says it was the rule."""
+    from . import stopping
+
+    class StoppingRunner(base):
+        stop_rule = None            # (results_dir, se, window)
+        _stopped = None
+        _checked = 0.0
+
+        def _get_committed_cost(self) -> float:
+            cost = super()._get_committed_cost()
+            return max(cost, self.evo_config.max_api_costs) if self._stop_rule_met(cost) else cost
+
+        def _stop_rule_met(self, cost: float) -> bool:
+            if self._stopped is not None or self.stop_rule is None:
+                return self._stopped is not None
+            if getattr(self, "cost_limit_reached", False) or cost >= self.evo_config.max_api_costs:
+                return False            # the dollar cap ended the run first: the rule is not its cause
+            if self._get_completed_job_work_count() > 0 or getattr(self, "failed_jobs_for_retry", None):
+                return False            # finished work not yet in the database could be a rise: check later
+            if time.monotonic() - self._checked < STOP_CHECK_SECONDS:
+                return False
+            self._checked = time.monotonic()
+            results_dir, se, window = self.stop_rule
+            try:
+                state = stopping.from_database(results_dir / "programs.sqlite", se, window)
+            except sqlite3.Error as e:         # a busy database: try again at the next check, never stop the run
+                print(f"stopping rule not checked: {e}", flush=True)
+                return False
+            if state["met"]:
+                self._stopped = {**state, "met_at": time.time()}
+                (results_dir / "stop_rule.json").write_text(json.dumps(self._stopped, indent=1) + "\n")
+                print(f"stopping rule met: {state['since_rise']} proposals without a rise above "
+                      f"{state['anchor']:.4f} + {se}; running work finishes, no new proposals", flush=True)
+            return self._stopped is not None
+
+    return StoppingRunner
 
 
 def srun_python(results_dir: Path, stage_dir: Path, workers: int) -> str:
@@ -234,6 +289,8 @@ def summarize(config: dict, started: float) -> dict:
         "errors": [c["error"] for c in calls if "error" in c],
         "cache_read_tokens": sum(c.get("cache_read_input_tokens", 0) for c in calls),
         "cache_write_tokens": sum(c.get("cache_creation_input_tokens", 0) for c in calls),
+        "stop_rule": json.loads((results_dir / "stop_rule.json").read_text())
+                     if (results_dir / "stop_rule.json").exists() else None,
         "islands": {i: {"programs": len(p), "seeds": [x["seed"] for x in p if x["seed"]],
                         "best": max((x["score"] for x in p if x["correct"]), default=None)}
                     for i, p in sorted(islands.items())},
