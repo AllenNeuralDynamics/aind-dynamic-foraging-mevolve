@@ -186,3 +186,111 @@ def test_the_step_is_told_the_programs_own_path(cluster):
     tmp_path, gen = cluster
     run(tmp_path, gen)
     assert f"--program_origin {gen / 'main.py'}" in (tmp_path / "srun.args").read_text()
+
+
+def test_an_own_job_drops_the_search_jobs_slurm_variables_and_the_keys():
+    env = srun_eval.job_env({"SLURM_JOB_ID": "1", "SLURM_NTASKS": "32", "SLURM_MEM_PER_CPU": "1500",
+                             "SLURM_CONF": "/etc/slurm.conf", "ANTHROPIC_API_KEY": "k", "WANDB_API_KEY": "w",
+                             "PATH": "/bin"})
+    assert env == {"SLURM_CONF": "/etc/slurm.conf", "PATH": "/bin"}
+
+
+def test_an_own_job_asks_srun_for_a_new_allocation_with_its_options(cluster, monkeypatch):
+    # eval_launch "job" (#70): no step of the search's allocation, but a job of its own
+    tmp_path, gen = cluster
+    monkeypatch.setenv("SLURM_JOB_ID", "999")
+    monkeypatch.setenv("SLURM_NTASKS", "1")
+    cmd = [sys.executable, str(tmp_path / "eval.py"), "--program_path", str(gen / "main.py"),
+           "--results_dir", str(gen / "results"), "--exit", "0"]
+    code = srun_eval.main(["--stage-dir", str(tmp_path / "stage"), "--cpus", "24",
+                           "--job-args", "--partition=aind --mem-per-cpu=1500M --time=02:00:00", "--", *cmd])
+    assert code == 0 and json.loads((gen / "results" / "metrics.json").read_text())["combined_score"] > 0
+    args = (tmp_path / "srun.args").read_text().split()
+    assert args[:7] == ["--partition=aind", "--mem-per-cpu=1500M", "--time=02:00:00",      # MEvolve's own last:
+                        "--nodes=1", "--ntasks=1", "--job-name=mevolve-eval", "--cpus-per-task=24"]  # they win
+    assert "--exact" not in args
+    env = (tmp_path / "srun.env").read_text()
+    assert "SLURM_JOB_ID=" not in env and "SLURM_NTASKS=" not in env and "sk-secret" not in env
+
+
+def test_the_runner_starts_own_job_evaluations_and_lets_them_queue(tmp_path, monkeypatch):
+    pytest.importorskip("shinka")
+    import shinka.launch
+
+    from mevolve.search import run as search_run
+
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def record(**kw):
+        seen.update(kw)
+        raise Stop
+    monkeypatch.setattr(shinka.launch, "LocalJobConfig", record)
+    config = {**search_run.DEFAULTS, "results_dir": str(tmp_path / "r"), "freeze": "/f", "cohorts": "/c",
+              "generation": "g", "validation": "v", "workers": 12, "eval_launch": "job", "stage_dir": str(tmp_path / "s"),
+              "eval_job_args": ["--partition=aind", "--mem-per-cpu=1500M"], "eval_time": "02:00:00",
+              "eval_queue_time": "12:30:00"}
+    (tmp_path / "r").mkdir()
+    with pytest.raises(Stop):
+        search_run.build_runner(config, "TASK")
+    wrapper = (tmp_path / "r" / "srun_python").read_text()
+    assert "--cpus 24 --job-args='--partition=aind --mem-per-cpu=1500M --time=02:00:00' --" in wrapper
+    assert seen["time"] == "14:30:00"             # Shinka's clock: the run's limit plus the queue
+
+
+def test_job_mode_needs_a_stage_dir_owns_time_and_cpus_and_ignores_the_allocation(tmp_path, monkeypatch):
+    pytest.importorskip("shinka")
+    from mevolve.search import run as search_run
+
+    monkeypatch.setenv("SLURM_NTASKS", "1")            # the small driver job: never a limit in job mode
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "4")
+    base = {"results_dir": "/r", "out_dir": "/o", "freeze": "/f", "cohorts": "/c", "generation": "g",
+            "validation": "v", "workers": 12, "eval_launch": "job", "max_evaluation_jobs": 48}
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(base))
+    with pytest.raises(ValueError, match="stage_dir"):
+        search_run.load_config(path)
+    for bad in (["--time=01:00:00"], ["-c", "8"], ["--cpus-per-task=8"], ["-c8"], ["-t60"], ["--ti=60"],
+                ["--cpus-per-t=8"]):
+        path.write_text(json.dumps({**base, "stage_dir": "/s", "eval_job_args": bad}))
+        with pytest.raises(ValueError, match="eval_job_args"):
+            search_run.load_config(path)
+    path.write_text(json.dumps({**base, "stage_dir": "/s", "eval_job_args": ["--partition=aind"]}))
+    assert search_run.load_config(path)["max_evaluation_jobs"] == 48
+
+
+def test_times_add_past_a_day():
+    from mevolve.search.run import add_times
+    assert add_times("02:00:00", "23:30:45") == "25:30:45"
+
+
+def test_the_wrapper_passes_default_job_args_that_start_with_a_dash(tmp_path, monkeypatch):
+    # with eval_job_args [] the value is "--time=...": argparse must read it as the value of --job-args
+    import shlex
+    import subprocess
+
+    from mevolve.search import run as search_run
+
+    tmp_path.joinpath("bin").mkdir()
+    executable(tmp_path / "bin" / "srun", FAKE_SRUN)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_SRUN_LOG", str(tmp_path / "srun"))
+    gen = tmp_path / "gen_1"
+    gen.mkdir()
+    (gen / "main.py").write_text("x = 1\n")
+    (tmp_path / "eval.py").write_text(FAKE_EVAL)
+    wrapper = search_run.srun_python(tmp_path, tmp_path / "stage", 12, ["--time=02:00:00"])
+    r = subprocess.run([wrapper, str(tmp_path / "eval.py"), "--program_path", str(gen / "main.py"),
+                        "--results_dir", str(gen / "results"), "--exit", "0"],
+                       env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "--time=02:00:00" in (tmp_path / "srun.args").read_text().split()
+
+
+def test_only_time_and_cpu_options_are_refused():
+    from mevolve.search.run import sets_time_or_cpus
+    assert all(map(sets_time_or_cpus, ["-t", "-t60", "-c", "-c8", "-vc8", "-vt60", "--time=1", "--tim",
+                                        "--cpus-per-task=2", "--cpus-per-ta"]))
+    assert not any(map(sets_time_or_cpus, ["--partition=aind", "--mem-per-cpu=1500M", "--constraint=cpu", "-p", "--cpus-per-gpu=2"]))

@@ -14,13 +14,19 @@ the launch node. The database, every ``gen_N/`` and the logs stay on the launch 
 3. copy ``metrics.json`` and ``correct.json`` back to ``R``, waiting briefly for NFS to show them;
 4. exit with the evaluation's exit code.
 
-    python -m mevolve.search.srun_eval --stage-dir D --cpus N -- <python> shinka_eval.py --program_path P ...
+With ``eval_launch: "job"`` (#70) the wrapper passes ``--job-args``: the evaluation is then its own Slurm
+job, not a step of the search's allocation. The wrapper drops the search job's ``SLURM_*`` variables, so
+``srun`` asks for a new allocation with these options (partition, memory, time limit), waits in the queue
+and runs it. Killing ``srun`` revokes that job, queued or running.
+
+    python -m mevolve.search.srun_eval --stage-dir D --cpus N [--job-args "..."] -- <python> shinka_eval.py ...
 """
 from __future__ import annotations
 
 import argparse
 import ctypes
 import os
+import shlex
 import signal
 import shutil
 import subprocess
@@ -32,6 +38,7 @@ RESULT_FILES = ("metrics.json", "correct.json")
 SECRET_ENV = ("ANTHROPIC_API_KEY", "WANDB_API_KEY")
 MEM_ENV = ("SLURM_MEM_PER_CPU", "SLURM_MEM_PER_NODE", "SLURM_MEM_PER_GPU")   # srun refuses more than one
 SRUN = ["srun", "--nodes=1", "--ntasks=1", "--exact", "--job-name=mevolve-eval"]   # --exact: only its CPUs
+JOB = ["srun", "--nodes=1", "--ntasks=1", "--job-name=mevolve-eval"]     # its own job (eval_launch "job")
 
 
 def rewrite(cmd: list[str], stage: Path) -> tuple[list[str], Path, Path]:
@@ -70,6 +77,13 @@ def step_env(environ) -> dict:
     return env
 
 
+def job_env(environ) -> dict:
+    """The environment of an evaluation that is its own job: no API keys, and none of the search job's
+    ``SLURM_*`` variables (``srun`` would read them as a step of that job), but ``SLURM_CONF``."""
+    return {k: v for k, v in environ.items()
+            if k not in SECRET_ENV and (not k.startswith("SLURM_") or k == "SLURM_CONF")}
+
+
 def _die_with_parent() -> None:
     """In the ``srun`` child: SIGTERM when this wrapper dies, even by SIGKILL (Shinka kills an evaluation
     past its time); ``srun`` then cancels the step, so a killed evaluation frees its node."""
@@ -80,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--stage-dir", type=Path, required=True)
     parser.add_argument("--cpus", type=int, required=True, help="CPUs of the evaluation's step")
+    parser.add_argument("--job-args", default=None,
+                        help="srun options of the evaluation's own job (eval_launch 'job'); else a step")
     parser.add_argument("cmd", nargs=argparse.REMAINDER, help="-- then the evaluation command")
     args = parser.parse_args(argv)
     cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
@@ -88,9 +104,13 @@ def main(argv: list[str] | None = None) -> int:
     staged += ["--program_origin", str(program)]       # the repeat cache names the kept program, not the stage
     stage.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(program, stage / "main.py")
-    env = step_env(os.environ)
-    code = subprocess.run([*SRUN, f"--cpus-per-task={args.cpus}", *staged], env=env,
-                          preexec_fn=_die_with_parent).returncode
+    if args.job_args is None:
+        launch, env = [*SRUN, f"--cpus-per-task={args.cpus}"], step_env(os.environ)
+    else:
+        # srun keeps the last value of a repeated option: MEvolve's own options come after the configured ones
+        launch = ["srun", *shlex.split(args.job_args), *JOB[1:], f"--cpus-per-task={args.cpus}"]
+        env = job_env(os.environ)
+    code = subprocess.run([*launch, *staged], env=env, preexec_fn=_die_with_parent).returncode
     copy_back(stage / "results", results)
     if all((results / name).exists() for name in RESULT_FILES):
         shutil.rmtree(stage, ignore_errors=True)

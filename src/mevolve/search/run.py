@@ -49,8 +49,11 @@ DEFAULTS = {
     "max_patch_attempts": 2,    # one repair attempt after an edit that does not apply (Han, 2026-11-04): <= 2 calls
     "repeat_cache": True,       # reuse the result of a program whose code repeats an earlier one (#52)
     "max_params": 8, "max_latent": 6,   # program limits (study 40 ADR 0005); a run may set others (#60)
-    "eval_launch": "local",     # "local": evaluations on this node; "srun": on any node of the allocation (#59)
-    "stage_dir": None,          # with "srun": a directory every node reads, for staged programs and the repeat cache
+    "eval_launch": "local",     # "local": evaluations on this node; "srun": on any node of the allocation (#59);
+                                # "job": each evaluation its own Slurm job, so the search grows with free CPUs (#70)
+    "stage_dir": None,          # with "srun" or "job": a directory every node reads, for staged programs and the repeat cache
+    "eval_job_args": [],        # with "job": srun options of each evaluation's job (partition, memory per CPU)
+    "eval_queue_time": "12:00:00",  # with "job": how long an evaluation may wait in the queue before Shinka gives up
     "embedding_python": None,   # a Python with torch and transformers: code embeddings, observed only (#56)
     "snapshot_minutes": None, "snapshot_dir": None,     # snapshots on shared disk, for --resume (#65)
     "stop_se": None, "stop_window": None,   # stopping rule (#63): stop after stop_window proposals without the
@@ -102,10 +105,12 @@ def load_config(path: Path) -> dict:
     if config["stop_window"] is not None and not (isinstance(config["stop_window"], int) and not isinstance(
             config["stop_window"], bool) and config["stop_window"] >= 1 and config["stop_se"] >= 0):
         raise ValueError("stop_window must be a whole number >= 1 and stop_se >= 0")
-    if config["eval_launch"] not in ("local", "srun"):
-        raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local' or 'srun'")
-    if config["eval_launch"] == "srun" and not config["stage_dir"]:
-        raise ValueError("eval_launch 'srun' needs a stage_dir every node can read")
+    if config["eval_launch"] not in ("local", "srun", "job"):
+        raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local', 'srun' or 'job'")
+    if config["eval_launch"] in ("srun", "job") and not config["stage_dir"]:
+        raise ValueError(f"eval_launch {config['eval_launch']!r} needs a stage_dir every node can read")
+    if config["eval_launch"] == "job" and any(sets_time_or_cpus(a) for a in config["eval_job_args"]):
+        raise ValueError("eval_job_args must not set the time (eval_time does) or the CPUs (2 x workers do)")
     cpus = os.cpu_count() or 1
     if config["eval_launch"] == "srun":     # each evaluation is one step of 2 x workers CPUs on one node
         step = 2 * config["workers"]
@@ -121,7 +126,7 @@ def load_config(path: Path) -> dict:
                 raise ValueError(f"an evaluation step needs {step} CPUs (2 x workers); a node has {cpus}")
             if config["max_evaluation_jobs"] > nodes * (cpus // step):
                 raise ValueError(f"{config['max_evaluation_jobs']} evaluation steps of {step} CPUs exceed {nodes} node(s)")
-    elif config["max_evaluation_jobs"] * config["workers"] > cpus:
+    elif config["eval_launch"] == "local" and config["max_evaluation_jobs"] * config["workers"] > cpus:
         raise ValueError("max_evaluation_jobs x workers exceeds this node's CPUs")
     return config
 
@@ -215,12 +220,16 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
         wandb_mode=wandb.get("mode"), wandb_notes=wandb.get("notes"), wandb_tags=["mevolve"],
         wandb_config={"mevolve": {k: v for k, v in config.items() if k != "wandb"}},
     )
-    srun = config["eval_launch"] == "srun"
+    srun = config["eval_launch"] in ("srun", "job")
+    own_job = config["eval_launch"] == "job"
     repeat_cache = (Path(config["stage_dir"]) if srun else results_dir) / "repeat_cache"
+    job_args = [*config["eval_job_args"], f"--time={config['eval_time']}"] if own_job else None
     job = LocalJobConfig(
         eval_program_path=str(Path(shinka_eval.__file__).resolve()),
-        python_executable=srun_python(results_dir, Path(config["stage_dir"]), config["workers"]) if srun else sys.executable,
-        numeric_threads_per_job=1, time=config["eval_time"],
+        python_executable=(srun_python(results_dir, Path(config["stage_dir"]), config["workers"], job_args)
+                           if srun else sys.executable),
+        numeric_threads_per_job=1,      # Slurm limits an evaluation job's run; Shinka's clock also counts the queue
+        time=add_times(config["eval_time"], config["eval_queue_time"]) if own_job else config["eval_time"],
         extra_cmd_args={**({"simulated_generation": config["simulated"]["generation"],
                             "simulated_validation": config["simulated"]["validation"]} if config["simulated"] else
                            {"freeze": str(config["freeze"]), "cohorts": str(config["cohorts"]),
@@ -282,17 +291,36 @@ def stopping_runner(base):
     return StoppingRunner
 
 
-def srun_python(results_dir: Path, stage_dir: Path, workers: int) -> str:
+def srun_python(results_dir: Path, stage_dir: Path, workers: int, job_args: list[str] | None = None) -> str:
     """The executable Shinka starts for each evaluation in "srun" mode: ``srun_eval`` on this node, which
-    stages the program and runs the evaluation on a free node with 2 x ``workers`` CPUs."""
+    stages the program and runs the evaluation on a free node with 2 x ``workers`` CPUs; with ``job_args``
+    ("job" mode), as its own Slurm job with those srun options."""
     import shlex
 
     path = results_dir / "srun_python"
     py = shlex.quote(sys.executable)
+    own = f"--job-args={shlex.quote(shlex.join(job_args))} " if job_args is not None else ""   # '=': a value
+                                                                    # starting with '-' is not read as an option
     path.write_text(f"#!/bin/sh\nexec {py} -m mevolve.search.srun_eval --stage-dir {shlex.quote(str(stage_dir))} "
-                    f"--cpus {2 * workers} -- {py} \"$@\"\n")
+                    f"--cpus {2 * workers} {own}-- {py} \"$@\"\n")
     path.chmod(0o755)
     return str(path)
+
+
+def sets_time_or_cpus(arg: str) -> bool:
+    """Whether an srun option may set the time limit or the CPUs per task: long forms and their abbreviations
+    (``--time``, ``--ti``, ``--cpus-per-task``, ``--cpus-per-t``), and any short-option group holding ``t`` or
+    ``c`` (``-t60``, ``-c8``, ``-vc8``). A short group is refused whole, so pass other options in long form."""
+    key = arg.split("=")[0]
+    if key.startswith("--"):
+        return len(key) > 3 and ("--time".startswith(key) or "--cpus-per-task".startswith(key))
+    return key.startswith("-") and any(ch in "tc" for ch in key[1:])
+
+
+def add_times(a: str, b: str) -> str:
+    """The sum of two ``hh:mm:ss`` times, as ``hh:mm:ss`` (hours may pass 24)."""
+    s = sum(int(h) * 3600 + int(m) * 60 + int(x) for h, m, x in (a.split(":"), b.split(":")))
+    return f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
 def summarize(config: dict, started: float) -> dict:
