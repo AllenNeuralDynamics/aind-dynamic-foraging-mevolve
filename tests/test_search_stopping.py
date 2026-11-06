@@ -47,7 +47,8 @@ def make_db(path, gen0, programs, failed):
 def test_database_order_is_finishing_order_and_each_generation_counts_once(tmp_path):
     db = tmp_path / "programs.sqlite"
     # generation 2 finishes before 1; 3 failed twice; 4 failed once, then left a program; 5 was rejected
-    make_db(db, [70.0, 72.0], [(2, 10, 72.2), (1, 20, 72.21), (4, 40, 72.0), (5, 50, None)], [(3, 30), (3, 31), (4, 35)])
+    make_db(db, [70.0, 72.0], [(2, 10, 72.2), (1, 20, 72.21), (4, 40, 72.0), (5, 50, None), (5, 55, 72.0)],
+            [(3, 30), (3, 31), (4, 35)])                   # generation 5 has two rows: it counts once
     state = stopping.from_database(db, SE, 4)
     assert state["anchor"] == 72.2 and state["proposals"] == 5          # 2, 1, 3, 4, 5
     assert state["since_rise"] == 4 and state["met"]                    # 72.21 is within SE of 72.2

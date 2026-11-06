@@ -49,9 +49,10 @@ def from_database(db_path: Path, se: float, window: int) -> dict:
         con.close()
     if start is None:
         return {"met": False, "reason": "generation 0 has no score yet"}
-    seen, no_program = {g for g, _, _ in rows}, {}
-    for g, t in sorted(failed, key=lambda r: r[1]):        # a generation counts once, at its first failure
-        if g not in seen:
-            no_program.setdefault(g, t)
-    events = [(t, s) for _, t, s in rows] + [(t, None) for t in no_program.values()]
+    first: dict[int, tuple[float, float | None]] = {}       # a generation counts once, at its first row
+    for g, t, s in sorted(rows, key=lambda r: r[1]):
+        first.setdefault(g, (t, s))
+    for g, t in sorted(failed, key=lambda r: r[1]):        # or at its first failure, if it left no program
+        first.setdefault(g, (t, None))
+    events = list(first.values())
     return plateau(float(start), [s for _, s in sorted(events, key=lambda e: e[0])], se, window)
