@@ -3,12 +3,15 @@
 The static checks (``mevolve.search.checks``) parse a program before it runs, but they are not a
 sandbox. ``install`` adds a Python audit hook to the worker process, after its imports and before the
 program loads, in pool workers only (``mevolve.evaluate``; with ``workers=1`` the evaluation runs in the
-calling process, which must still write its results, and is not isolated). The hook stays for the life
+calling process, which must still write its results, and is not isolated). The search's evaluation
+script (``search.shinka_eval``) also loads and traces each candidate once in an isolated worker before
+fitting it, so a candidate never runs in the process that writes the results. The hook stays for the life
 of the process, so every program the worker runs later is covered. From then on, in that process:
 
 - ``open`` for writing fails anywhere, and ``open`` for reading fails outside Python's import paths
-  (``sys.prefix``, ``sys.path``: the lazy imports a fit does), the program's own directory and
-  ``/dev``, ``/proc`` and ``/sys``: the key files in the home directory are out of reach;
+  (``sys.prefix``, ``sys.path``: the lazy imports a fit does), the program's own directory, ``/dev``
+  and ``/sys``: the key files in the home directory, and other processes' start-up environments under
+  ``/proc``, are out of reach;
 - sockets, subprocesses, ``exec``-family calls, ``fork``, ``ctypes`` and file system changes fail.
 
 Measured on 2026-11-05: fitting a program raised only reads under the environment's library
@@ -33,8 +36,9 @@ _installed = False
 
 
 def _roots(program_path: Path) -> tuple[str, ...]:
-    roots = {sys.prefix, sys.base_prefix, sys.exec_prefix, "/dev", "/proc", "/sys",
-             str(Path(program_path).resolve().parent)}
+    roots = {sys.prefix, sys.base_prefix, sys.exec_prefix, "/dev",
+             "/sys",        # hardware facts; JAX reads PCI vendor ids when it looks for accelerators
+             str(Path(program_path).resolve().parent)}   # not /proc: other processes' start-up environments
     roots |= {str(Path(p).resolve()) for p in sys.path if p}
     return tuple(sorted(r.rstrip("/") + "/" for r in roots))
 
