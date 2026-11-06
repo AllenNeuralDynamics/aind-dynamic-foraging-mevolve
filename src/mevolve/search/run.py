@@ -371,7 +371,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.resume:
         restored = snapshot.restore(Path(config["snapshot_dir"]), results_dir)
-        print(f"resumed from {config['snapshot_dir']}: {restored['programs']} programs", flush=True)
+        if restored["max_generation"] == 0:     # no proposal yet: Shinka would score the template again
+            print("the snapshot holds no proposal yet: starting afresh", flush=True)
+            shutil.rmtree(results_dir)
+            results_dir.mkdir(parents=True)
+            args.resume = False
+        else:
+            print(f"resumed from {config['snapshot_dir']}: {restored['programs']} programs", flush=True)
     (results_dir / "run_config.json").write_text(json.dumps(config, indent=1) + "\n")
     signal.signal(signal.SIGTERM, _terminate)       # the time limit or scancel: a last snapshot, then the end of run
 

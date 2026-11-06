@@ -73,21 +73,40 @@ def _write_text(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def settled_generations(db: Path) -> set[int]:
+    """Generations recorded in a database: a program, or a proposal that failed and left none."""
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        out = {g for (g,) in con.execute("SELECT DISTINCT generation FROM programs")}
+        return out | {g for (g,) in con.execute("SELECT DISTINCT generation FROM attempt_log WHERE status = 'failed'")}
+    finally:
+        con.close()
+
+
 def restore(snapshot_dir: Path, results_dir: Path) -> dict:
-    """Fill an empty ``results_dir`` from a complete snapshot; returns its ``snapshot.json``."""
+    """Fill an empty ``results_dir`` from a complete snapshot; returns its ``snapshot.json`` with
+    ``max_generation``. Only the generation directories its database records are restored; others (a
+    snapshot cut short after copying them) are removed from the snapshot too, so they cannot stand in for
+    the directories of the generations the resumed run will make with those numbers.
+
+    Generations still running when the snapshot was taken are not retried: their numbers stay unused
+    (the stopping rule counts finished proposals, and the ledger keeps their Claude calls)."""
     snapshot_dir, results_dir = Path(snapshot_dir), Path(results_dir)
     marker = snapshot_dir / "snapshot.json"
     if not marker.exists():
         raise FileNotFoundError(f"{snapshot_dir} holds no complete snapshot (no snapshot.json)")
+    settled = settled_generations(snapshot_dir / DB)
     results_dir.mkdir(parents=True, exist_ok=True)
     for f in snapshot_dir.iterdir():
         if f.name.startswith(".") or f.name == "snapshot.json":
             continue
-        if f.is_dir():
+        if f.is_dir() and f.name.startswith("gen_") and f.name[4:].isdigit() and int(f.name[4:]) not in settled:
+            shutil.rmtree(f)                        # stale: not in the database it belongs with
+        elif f.is_dir():
             shutil.copytree(f, results_dir / f.name, copy_function=shutil.copyfile)
         else:
             shutil.copyfile(f, results_dir / f.name)
-    return json.loads(marker.read_text())
+    return {**json.loads(marker.read_text()), "max_generation": max(settled, default=0)}
 
 
 class Snapshotter:

@@ -76,7 +76,7 @@ def test_restore_fills_a_fresh_results_dir(tmp_path):
     make_run(tmp_path / "run").close()
     snapshot.take(tmp_path / "run", tmp_path / "snap")
     restored = snapshot.restore(tmp_path / "snap", tmp_path / "new")
-    assert restored["programs"] == 3
+    assert restored["programs"] == 3 and restored["max_generation"] == 3
     con = sqlite3.connect(tmp_path / "new" / "programs.sqlite")
     assert con.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 3
     con.close()
@@ -159,3 +159,12 @@ def test_the_database_is_replaced_last(tmp_path, monkeypatch):
     assert check.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 3    # the old database
     check.close()
     assert (tmp_path / "snap" / "ledger.jsonl").read_text().count("cost") == 2    # a newer ledger
+
+
+def test_restore_drops_generation_directories_its_database_does_not_record(tmp_path):
+    make_run(tmp_path / "run").close()
+    snapshot.take(tmp_path / "run", tmp_path / "snap")
+    (tmp_path / "snap" / "gen_7" / "results").mkdir(parents=True)     # copied by a snapshot cut short
+    snapshot.restore(tmp_path / "snap", tmp_path / "new")
+    assert not (tmp_path / "new" / "gen_7").exists() and not (tmp_path / "snap" / "gen_7").exists()
+    assert (tmp_path / "new" / "gen_3").exists()
