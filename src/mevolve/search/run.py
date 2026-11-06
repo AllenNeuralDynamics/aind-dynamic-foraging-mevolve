@@ -86,8 +86,9 @@ def load_config(path: Path) -> dict:
         raise ValueError(f"config needs {missing}")
     if (config["stop_se"] is None) != (config["stop_window"] is None):
         raise ValueError("the stopping rule needs both stop_se and stop_window, or neither")
-    if config["stop_window"] is not None and not (config["stop_se"] >= 0 and int(config["stop_window"]) >= 1):
-        raise ValueError("stop_se must be >= 0 and stop_window >= 1")
+    if config["stop_window"] is not None and not (isinstance(config["stop_window"], int) and not isinstance(
+            config["stop_window"], bool) and config["stop_window"] >= 1 and config["stop_se"] >= 0):
+        raise ValueError("stop_window must be a whole number >= 1 and stop_se >= 0")
     if config["eval_launch"] not in ("local", "srun"):
         raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local' or 'srun'")
     if config["eval_launch"] == "srun" and not config["stage_dir"]:

@@ -96,6 +96,9 @@ def test_config_needs_both_stop_settings(tmp_path):
     path.write_text(json.dumps({**base, "stop_se": 0.05}))
     with pytest.raises(ValueError, match="both stop_se and stop_window"):
         run.load_config(path)
+    path.write_text(json.dumps({**base, "stop_se": 0.05, "stop_window": 1.9}))
+    with pytest.raises(ValueError, match="whole number"):
+        run.load_config(path)
     path.write_text(json.dumps({**base, "stop_se": 0.05, "stop_window": 2000}))
     assert run.load_config(path)["stop_window"] == 2000
 
