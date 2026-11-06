@@ -40,9 +40,11 @@ def _evaluate_one(args) -> dict:
     program_path, data, regime, seed, n_draws, n_starts, max_em = args
     import jax
 
-    from . import fitter, fitting, program, scoring
+    from . import fitter, fitting, isolation, program, scoring
     from .fingerprints import fingerprints
 
+    if mp.parent_process() is not None:     # a pool worker: no files or network for the program (#40)
+        isolation.install(program_path)
     t0 = time.time()
     prog = program.load(program_path)
     f = fitter.fit(prog, data.fit, regime, seed=seed, n_starts=n_starts, max_em=max_em)
