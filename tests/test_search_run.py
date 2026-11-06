@@ -129,3 +129,20 @@ def test_a_cached_seed_is_held_to_the_runs_limits(tmp_path, monkeypatch):
     assert run.seed_metrics("big", nine, config) == {"combined_score": 70.0}            # a hit at 12
     with pytest.raises(ProgramRejected, match="at most 8"):
         run.seed_metrics("big", nine, {**config, "max_params": 8})                       # the same hit at 8
+
+
+def test_srun_slots_are_checked_against_the_allocation_not_the_first_node(tmp_path, monkeypatch):
+    cfg = {**BASE, "results_dir": "/r", "out_dir": "/o", "cohorts": "/c", "wandb": None, "eval_launch": "srun",
+           "stage_dir": "/s", "workers": 12, "max_evaluation_jobs": 32}
+    monkeypatch.setattr(run.os, "cpu_count", lambda: 32)       # the batch step on a small node
+    monkeypatch.setenv("SLURM_JOB_NUM_NODES", "9")
+    monkeypatch.setenv("SLURM_NTASKS", "32")
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "24")
+    assert run.load_config(write(tmp_path, cfg))["max_evaluation_jobs"] == 32
+    monkeypatch.setenv("SLURM_NTASKS", "16")
+    with pytest.raises(ValueError, match="exceed the 16 slots"):
+        run.load_config(write(tmp_path, cfg))
+    monkeypatch.setenv("SLURM_NTASKS", "32")
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "16")
+    with pytest.raises(ValueError, match="a slot has 16"):
+        run.load_config(write(tmp_path, cfg))

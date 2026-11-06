@@ -108,11 +108,19 @@ def load_config(path: Path) -> dict:
         raise ValueError("eval_launch 'srun' needs a stage_dir every node can read")
     cpus = os.cpu_count() or 1
     if config["eval_launch"] == "srun":     # each evaluation is one step of 2 x workers CPUs on one node
-        nodes, step = int(os.environ.get("SLURM_JOB_NUM_NODES", "1")), 2 * config["workers"]
-        if step > cpus:
-            raise ValueError(f"an evaluation step needs {step} CPUs (2 x workers); a node has {cpus}")
-        if config["max_evaluation_jobs"] > nodes * (cpus // step):
-            raise ValueError(f"{config['max_evaluation_jobs']} evaluation steps of {step} CPUs exceed {nodes} node(s)")
+        step = 2 * config["workers"]
+        tasks, per_task = os.environ.get("SLURM_NTASKS"), os.environ.get("SLURM_CPUS_PER_TASK")
+        if tasks and per_task:              # slots of the allocation, whatever the nodes' sizes
+            if step > int(per_task):
+                raise ValueError(f"an evaluation step needs {step} CPUs (2 x workers); a slot has {per_task}")
+            if config["max_evaluation_jobs"] > int(tasks):
+                raise ValueError(f"{config['max_evaluation_jobs']} evaluation steps exceed the {tasks} slots")
+        else:
+            nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", "1"))
+            if step > cpus:
+                raise ValueError(f"an evaluation step needs {step} CPUs (2 x workers); a node has {cpus}")
+            if config["max_evaluation_jobs"] > nodes * (cpus // step):
+                raise ValueError(f"{config['max_evaluation_jobs']} evaluation steps of {step} CPUs exceed {nodes} node(s)")
     elif config["max_evaluation_jobs"] * config["workers"] > cpus:
         raise ValueError("max_evaluation_jobs x workers exceeds this node's CPUs")
     return config
