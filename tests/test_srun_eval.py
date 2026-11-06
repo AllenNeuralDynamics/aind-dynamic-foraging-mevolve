@@ -206,8 +206,8 @@ def test_an_own_job_asks_srun_for_a_new_allocation_with_its_options(cluster, mon
                            "--job-args", "--partition=aind --mem-per-cpu=1500M --time=02:00:00", "--", *cmd])
     assert code == 0 and json.loads((gen / "results" / "metrics.json").read_text())["combined_score"] > 0
     args = (tmp_path / "srun.args").read_text().split()
-    assert args[:7] == ["--nodes=1", "--ntasks=1", "--job-name=mevolve-eval", "--cpus-per-task=24",
-                        "--partition=aind", "--mem-per-cpu=1500M", "--time=02:00:00"]
+    assert args[:7] == ["--partition=aind", "--mem-per-cpu=1500M", "--time=02:00:00",      # MEvolve's own last:
+                        "--nodes=1", "--ntasks=1", "--job-name=mevolve-eval", "--cpus-per-task=24"]  # they win
     assert "--exact" not in args
     env = (tmp_path / "srun.env").read_text()
     assert "SLURM_JOB_ID=" not in env and "SLURM_NTASKS=" not in env and "sk-secret" not in env

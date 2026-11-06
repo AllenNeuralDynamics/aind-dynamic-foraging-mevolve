@@ -107,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.job_args is None:
         launch, env = [*SRUN, f"--cpus-per-task={args.cpus}"], step_env(os.environ)
     else:
-        launch = [*JOB, f"--cpus-per-task={args.cpus}", *shlex.split(args.job_args)]
+        # srun keeps the last value of a repeated option: MEvolve's own options come after the configured ones
+        launch = ["srun", *shlex.split(args.job_args), *JOB[1:], f"--cpus-per-task={args.cpus}"]
         env = job_env(os.environ)
     code = subprocess.run([*launch, *staged], env=env, preexec_fn=_die_with_parent).returncode
     copy_back(stage / "results", results)
