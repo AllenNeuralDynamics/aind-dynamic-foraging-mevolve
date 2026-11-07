@@ -19,8 +19,8 @@ def usage(inp=100, out=50, write=0, read=0):
                            cache_read_input_tokens=read)
 
 
-def message(text="<NAME>x</NAME> code", stop="end_turn", u=None, category=None):
-    blocks = [SimpleNamespace(type="thinking", thinking=""), SimpleNamespace(type="text", text=text)]
+def message(text="<NAME>x</NAME> code", stop="end_turn", u=None, category=None, thinking=""):
+    blocks = [SimpleNamespace(type="thinking", thinking=thinking), SimpleNamespace(type="text", text=text)]
     return SimpleNamespace(content=blocks, stop_reason=stop, usage=u or usage(), model=MODEL, id="msg_1",
                            stop_details=SimpleNamespace(category=category) if category else None)
 
@@ -71,7 +71,8 @@ def test_request_is_what_claude_5_accepts(tmp_path):
     client = FakeClient(message())
     result = run(client, settings(tmp_path, effort="high"))
     sent = client.calls[0]
-    assert "temperature" not in sent and "thinking" not in sent
+    assert "temperature" not in sent                # Shinka's sampled temperature and thinking budget are dropped
+    assert sent["thinking"] == {"type": "adaptive", "display": "summarized"}     # the reasoning comes back (#74)
     assert sent["output_config"] == {"effort": "high"} and sent["model"] == MODEL
     assert sent["system"][0] == {"type": "text", "text": "TASK\n", "cache_control": {"type": "ephemeral"}}
     assert sent["system"][1] == {"type": "text", "text": "format"}
@@ -183,3 +184,10 @@ def test_the_cap_is_rechecked_before_a_retry(tmp_path, monkeypatch):
     with pytest.raises(NonRetryableLLMError, match="cap"):
         run(client, s)
     assert len(client.calls) == 1
+
+
+def test_the_thinking_summary_reaches_shinka(tmp_path):
+    client = FakeClient(message(thinking="The parent's reward rate collapsed, so add forgetting."))
+    result = run(client, settings(tmp_path))
+    assert result.thought == "The parent's reward rate collapsed, so add forgetting."
+    assert result.content == "<NAME>x</NAME> code"          # the summary never enters the proposal

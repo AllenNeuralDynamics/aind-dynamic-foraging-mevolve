@@ -5,8 +5,10 @@ with HTTP 400; retries a 400 for up to 6000 s; sends no prompt caching; ignores 
 refusals when it prices a call; and drops the cost of an empty reply. ``install`` replaces that
 call with ``query_anthropic_async`` here, which:
 
-- sends what Claude 5.x accepts: adaptive thinking (the default), ``output_config.effort``, no
-  temperature, streamed so a long, high-effort reply cannot time out;
+- sends what Claude 5.x accepts: adaptive thinking, returned as a summary (``display: summarized``;
+  Opus 5.x omits it otherwise, and the summary is not billed: #74), ``output_config.effort``, no
+  temperature, streamed so a long, high-effort reply cannot time out; Shinka keeps the summary as
+  each program's ``llm_result.thought``;
 - caches the system prompt up to the end of the task message (``cache_prefix``);
 - turns a refusal or a reply cut at ``max_tokens`` into an empty reply, which Shinka counts as a
   failed proposal, and a 400 into an error Shinka does not retry;
@@ -122,6 +124,7 @@ async def query_anthropic_async(client, model, msg, system_msg, msg_history, out
             async with client.messages.stream(model=model, max_tokens=s.max_tokens,
                                               system=system_blocks(system_msg, s.cache_prefix),
                                               messages=messages,
+                                              thinking={"type": "adaptive", "display": "summarized"},
                                               output_config={"effort": s.effort}) as stream:
                 response = await stream.get_final_message()
             break
