@@ -121,7 +121,8 @@ def place(results_dir: Path, db_config, seeds: list[dict], embedding_model: str 
                 id=f"seed-{s['name']}-{uuid.uuid4().hex[:8]}", code=s["code"], generation=0,
                 combined_score=float(m["combined_score"]), public_metrics=m.get("public", {}),
                 private_metrics=m.get("private", {}), text_feedback=m.get("text_feedback", ""),
-                correct=True, embedding=embedding, metadata={"mevolve_island": s["island"], "mevolve_seed": s["name"]})
+                correct=True, embedding=embedding, metadata={"mevolve_island": s["island"], "mevolve_seed": s["name"],
+                          "patch_name": s["name"], "patch_description": f"literature seed {s['name']}"})   # the portal's label
             db.add(program)
             ids.append(program.id)
     finally:

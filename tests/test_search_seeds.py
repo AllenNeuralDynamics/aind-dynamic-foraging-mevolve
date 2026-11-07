@@ -39,6 +39,12 @@ def test_seeds_on_their_islands_and_template_on_island_zero(tmp_path):
     gen0_island0 = [p for p in islands[0] if p["generation"] == 0]
     assert [p["id"] for p in gen0_island0] == ["template"]          # no copies anywhere
     assert sum(len(v) for v in islands.values()) == 6
+    import json
+    import sqlite3
+    con = sqlite3.connect(tmp_path / "programs.sqlite")
+    labels = {json.loads(m)["mevolve_seed"]: json.loads(m)["patch_name"]
+              for (m,) in con.execute("SELECT metadata FROM programs WHERE id LIKE 'seed-%'")}
+    assert labels == {n: n for n in names}         # Shinka's portal labels a program by its patch_name
 
 
 def test_place_refuses_island_zero_duplicates_and_reuse(tmp_path):
