@@ -74,7 +74,8 @@ def test_request_is_what_claude_5_accepts(tmp_path):
     assert "temperature" not in sent                # Shinka's sampled temperature and thinking budget are dropped
     assert sent["thinking"] == {"type": "adaptive", "display": "summarized"}     # the reasoning comes back (#74)
     assert sent["output_config"] == {"effort": "high"} and sent["model"] == MODEL
-    assert sent["system"][0] == {"type": "text", "text": "TASK\n", "cache_control": {"type": "ephemeral"}}
+    assert sent["system"][0] == {"type": "text", "text": "TASK\n",
+                                 "cache_control": {"type": "ephemeral", "ttl": "1h"}}       # #76
     assert sent["system"][1] == {"type": "text", "text": "format"}
     assert result.content == "<NAME>x</NAME> code"
 
@@ -87,6 +88,17 @@ def test_cost_counts_cache_tokens_and_lands_in_the_ledger(tmp_path):
     entry = json.loads((tmp_path / "ledger.jsonl").read_text())
     assert entry["cost"] == pytest.approx(expected) and entry["cache_read_input_tokens"] == 100_000
     assert claude.spent(tmp_path / "ledger.jsonl") == pytest.approx(expected)
+
+
+def test_one_hour_cache_writes_cost_twice_the_input_price(tmp_path):
+    u = usage(inp=1000, out=2000, write=10_000, read=100_000)
+    u.cache_creation = SimpleNamespace(ephemeral_1h_input_tokens=8_000, ephemeral_5m_input_tokens=2_000)
+    result = run(FakeClient(message(u=u)), settings(tmp_path))
+    expected_in = (1000 * 2.0 + 2_000 * 2.5 + 8_000 * 2 * 2.0 + 100_000 * 0.2) / 1e6
+    assert result.input_cost == pytest.approx(expected_in)
+    assert result.cost == pytest.approx(expected_in + 2000 * 10.0 / 1e6)
+    entry = json.loads((tmp_path / "ledger.jsonl").read_text())
+    assert entry["cost"] == pytest.approx(result.cost) and entry["cache_creation_1h_input_tokens"] == 8_000
 
 
 @pytest.mark.parametrize("stop", ["refusal", "max_tokens"])

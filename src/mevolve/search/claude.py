@@ -9,7 +9,8 @@ call with ``query_anthropic_async`` here, which:
   Opus 5.x omits it otherwise, and the summary is not billed: #74), ``output_config.effort``, no
   temperature, streamed so a long, high-effort reply cannot time out; Shinka keeps the summary as
   each program's ``llm_result.thought``;
-- caches the system prompt up to the end of the task message (``cache_prefix``);
+- caches the system prompt up to the end of the task message (``cache_prefix``) for an hour: proposals
+  often come more than 5 minutes apart, and a 5-minute cache would be written again for each (#76);
 - turns a refusal or a reply cut at ``max_tokens`` into an empty reply, which Shinka counts as a
   failed proposal, and a 400 into an error Shinka does not retry;
 - retries rate limits, timeouts and server errors itself, with backoff, after turning off the SDK's
@@ -27,11 +28,13 @@ from pathlib import Path
 
 import anthropic
 
-# $ per million tokens: input, output, cache write (5-minute TTL, 1.25x input), cache read
+# $ per million tokens: input, output, cache write (5-minute TTL, 1.25x input), cache read; a 1-hour
+# cache write costs 2x input (WRITE_1H)
 PRICES = {
     "claude-sonnet-5-5": (2.00, 10.00, 2.50, 0.20),
     "claude-opus-5-5": (4.00, 20.00, 5.00, 0.20),
 }
+WRITE_1H = 2.0          # x input price, for cache writes with a 1-hour TTL
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 NOT_RETRYABLE = (anthropic.BadRequestError, anthropic.AuthenticationError, anthropic.PermissionDeniedError,
                  anthropic.NotFoundError, anthropic.UnprocessableEntityError)
@@ -67,12 +70,22 @@ def backoff(error: anthropic.APIError, attempt: int) -> float:
         return min(60.0, 2.0 ** (attempt + 1))
 
 
+def writes_1h(usage) -> int:
+    """Cache-write tokens with a 1-hour TTL, from ``usage.cache_creation`` (0 if absent)."""
+    return getattr(getattr(usage, "cache_creation", None), "ephemeral_1h_input_tokens", 0) or 0
+
+
+def input_cost(model: str, usage) -> float:
+    """Dollars for one call's input: uncached, cache writes (5-minute and 1-hour) and cache reads."""
+    p_in, _, p_write, p_read = PRICES[model]
+    w1h = writes_1h(usage)
+    return (usage.input_tokens * p_in + ((usage.cache_creation_input_tokens or 0) - w1h) * p_write
+            + w1h * WRITE_1H * p_in + (usage.cache_read_input_tokens or 0) * p_read) / 1e6
+
+
 def cost(model: str, usage) -> float:
     """Dollars for one call from its ``usage``; thinking tokens are billed as output."""
-    p_in, p_out, p_write, p_read = PRICES[model]
-    return (usage.input_tokens * p_in + usage.output_tokens * p_out
-            + (usage.cache_creation_input_tokens or 0) * p_write
-            + (usage.cache_read_input_tokens or 0) * p_read) / 1e6
+    return input_cost(model, usage) + usage.output_tokens * PRICES[model][1] / 1e6
 
 
 def spent(ledger: Path) -> float:
@@ -87,7 +100,7 @@ def system_blocks(system_msg: str, prefix: str) -> list[dict]:
     """The system prompt as content blocks, with a cache breakpoint after ``prefix`` when the
     prompt starts with it (Shinka appends the edit format after the task message)."""
     if prefix and system_msg.startswith(prefix):
-        blocks = [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}]
+        blocks = [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
         rest = system_msg[len(prefix):]
         return blocks + ([{"type": "text", "text": rest}] if rest else [])
     return [{"type": "text", "text": system_msg}]
@@ -148,19 +161,18 @@ async def query_anthropic_async(client, model, msg, system_msg, msg_history, out
         "refusal_category": getattr(getattr(response, "stop_details", None), "category", None),
         "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
         "cache_creation_input_tokens": usage.cache_creation_input_tokens or 0,
+        "cache_creation_1h_input_tokens": writes_1h(usage),
         "cache_read_input_tokens": usage.cache_read_input_tokens or 0,
         "cost": dollars, "request_id": getattr(response, "_request_id", None), "id": response.id})
     if stop in ("refusal", "max_tokens"):       # a failed proposal: Shinka moves on, never retries it
         content = ""
-    p_in, p_out, p_write, p_read = PRICES[model]
-    input_cost = (usage.input_tokens * p_in + (usage.cache_creation_input_tokens or 0) * p_write
-                  + (usage.cache_read_input_tokens or 0) * p_read) / 1e6
+    p_out = PRICES[model][1]
     history = messages + [{"role": "assistant", "content": [{"type": "text", "text": content}]}]
     return QueryResult(
         content=content, msg=msg, system_msg=system_msg, new_msg_history=history, model_name=model,
         kwargs={"effort": s.effort, "max_tokens": s.max_tokens},
         input_tokens=usage.input_tokens + (usage.cache_creation_input_tokens or 0) + (usage.cache_read_input_tokens or 0),
-        output_tokens=usage.output_tokens, cost=dollars, input_cost=input_cost,
+        output_tokens=usage.output_tokens, cost=dollars, input_cost=input_cost(model, usage),
         output_cost=usage.output_tokens * p_out / 1e6, thought=thought, model_posteriors=model_posteriors)
 
 
