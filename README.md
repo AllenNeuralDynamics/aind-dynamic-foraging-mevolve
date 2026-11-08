@@ -102,7 +102,12 @@ the restored ledger. Programs that finished after the last snapshot are proposed
   the best programs and breeds new ones from them. A simplification stage then trades fit for
   readability.
 
-The scientific question, the comparisons and the results live in study 40 of
+![Study 40's procedure: (a) four cohorts of mice; (b) the search loop, with the score from the validation mice and Claude's feedback from the generation mice; (c) simplification, pre-registration on the selection mice and one score on the test mice, as the gap closed from HB-CTT to the GRU](https://raw.githubusercontent.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/ce2aab2fcb4e6d9d138da486b3e5c920f6076c82/studies/40-cognitive-llm-discovery/analysis/fig_procedure.svg)
+
+*The procedure, from study 40 ([`fig_procedure.svg`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/ce2aab2fcb4e6d9d138da486b3e5c920f6076c82/studies/40-cognitive-llm-discovery/analysis/fig_procedure.svg)).*
+
+The scientific question, the comparisons and the results live in
+[study 40](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/tree/main/studies/40-cognitive-llm-discovery) of
 [`aind-dynamic-foraging-bfm-studies`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies)
 ([issue 73](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/issues/73)).
 This repo holds the tool.
