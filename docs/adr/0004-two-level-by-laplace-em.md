@@ -44,6 +44,24 @@ literature models tried: 103 to 145 s with the first fitter; 179 to 204 s once b
 Both pass gate 1c either way. Scores that are reported, not ranked, such as the pre-registered
 programs on the test subjects, run EM to convergence (``max_em=100``).
 
+## Amendment (2026-11-08): per-mouse fallback
+
+The fit can fail on a single mouse while the cohort as a whole passes (#81). Rescoring study 40's top
+programs (51 programs × 148 mice, studies #128) found 3.2% of mouse-program pairs with a 2-level
+held-out log-likelihood below the per-subject one, in two groups: 131 Monte Carlo misses under 0.002
+nats per trial, and 105 failures from 0.005 to above 0.05, with 4 between. One failed mouse moved a
+program's pooled score by up to 0.25 (×100), against differences of 0.01 to 0.03 between top programs.
+So each mouse whose 2-level log-likelihood is non-finite or more than 0.005 nats per trial below its
+per-subject one is scored with its per-subject fit (``evaluate.FALLBACK_TOL``). The tolerance leaves
+the misses alone, so the score is not biased up by taking the larger of two noisy numbers for every
+mouse. If the result is still below the pooled per-subject score (a 2-level fit a little worse on every
+mouse, as on flat likelihoods) or every mouse fell back, the program keeps its pooled per-subject score
+and ``two_level_failed`` is set, as before; one failed mouse no longer sets it. The feedback counts the
+fallen-back mice (their ids mean nothing to Claude; they are in `fallback_subjects`) and leaves
+them out of the generation diagnostics. Searches started before this change keep their
+scores; the change applies from the next search and to every reported score (Han approved the
+change, 2026-11-08; the tolerance comes from the rescoring data above).
+
 ## Considered options
 
 - **The full posterior (NUTS), as study 13.** The reference, but about 650 s per subject: too slow

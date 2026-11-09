@@ -127,6 +127,17 @@ def test_feedback_after_a_failed_2_level_fit_omits_its_details():
     assert "omitted" in text and "by stage and task (score" not in text and "Fitted parameters" not in text
 
 
+def test_feedback_names_fallen_back_mice_and_leaves_them_out_of_the_details():
+    def rec(sid, group):
+        return {"subject_id": sid, "session_groups": [group], "session_log_lik": [-60.0], "session_n_trials": [100],
+                "fingerprints": {"all": {"losses": 0.01}}, "typical_params": {"bias": 0.1}}
+    gen = {"score": 0.72, "two_level_failed": False, "n_fallback": 1, "fallback_subjects": ["a"]}
+    val = {"score": 0.73, "two_level_failed": False, "n_fallback": 2, "fallback_subjects": ["c", "d"]}
+    text = shinka_eval.feedback(val, gen, [rec("a", "early|Failed"), rec("b", "final|Kept")], {"bias": (-5.0, 5.0)})
+    assert "2 validation mice" in text and "1 of 2 generation mice" in text
+    assert "final|Kept" in text and "early|Failed" not in text      # the failed fit's details are left out
+
+
 def test_the_prompt_states_the_runs_limits():
     from mevolve.search import prompt
 

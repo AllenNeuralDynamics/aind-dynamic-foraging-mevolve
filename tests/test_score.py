@@ -77,6 +77,35 @@ def test_two_level_records_carry_the_per_subject_held_out_score():
     assert rec["per_subject_log_lik"] == sub["log_lik"]       # the same per-subject fit, scored the same way
 
 
+def test_program_score_falls_back_per_mouse_beyond_the_tolerance():
+    # mouse a: a failed 2-level fit (0.05 per trial below its per-mouse fit); mouse b: a Monte Carlo miss
+    # (0.001 per trial below, inside the tolerance); mouse c: a normal fit
+    a = {"subject_id": "a", "log_lik": -70.0, "per_subject_log_lik": -65.0, "n_trials": 100}
+    b = {"subject_id": "b", "log_lik": -65.1, "per_subject_log_lik": -65.0, "n_trials": 100}
+    c = {"subject_id": "c", "log_lik": -55.0, "per_subject_log_lik": -64.0, "n_trials": 100}
+    s = evaluate.program_score([a, b, c])
+    assert s["score"] == pytest.approx(np.exp((-65.0 - 65.1 - 55.0) / 300))      # a falls back, b and c keep 2-level
+    assert s["n_fallback"] == 1 and s["fallback_subjects"] == ["a"]
+    assert s["two_level"] == pytest.approx(np.exp((-70.0 - 65.1 - 55.0) / 300))  # the raw pools are unchanged
+    assert s["per_subject"] == pytest.approx(np.exp((-65.0 - 65.0 - 64.0) / 300))
+    assert not s["two_level_failed"]                    # the pooled flag keeps its meaning
+
+
+def test_program_score_falls_back_for_a_non_finite_mouse():
+    a = {"subject_id": "a", "log_lik": float("nan"), "per_subject_log_lik": -65.0, "n_trials": 100}
+    c = {"subject_id": "c", "log_lik": -60.0, "per_subject_log_lik": -64.0, "n_trials": 100}
+    s = evaluate.program_score([a, c])
+    assert s["score"] == pytest.approx(np.exp((-65.0 - 60.0) / 200)) and s["fallback_subjects"] == ["a"]
+    assert not s["two_level_failed"] and not np.isfinite(s["two_level"])   # one NaN mouse does not fail the program
+
+
+def test_program_score_keeps_the_per_subject_score_when_the_2_level_fit_is_lower_everywhere():
+    # every mouse a little below its per-mouse fit (inside the tolerance): a systematic failure, not noise
+    recs = [{"subject_id": k, "log_lik": -65.3, "per_subject_log_lik": -65.0, "n_trials": 100} for k in "abc"]
+    s = evaluate.program_score(recs)
+    assert s["two_level_failed"] and s["n_fallback"] == 0 and s["score"] == s["per_subject"]
+
+
 def test_program_score_falls_back_when_the_two_level_fit_scores_lower():
     good = [{"log_lik": -60.0, "per_subject_log_lik": -65.0, "n_trials": 100}]
     bad = [{"log_lik": -80.0, "per_subject_log_lik": -65.0, "n_trials": 100}]
