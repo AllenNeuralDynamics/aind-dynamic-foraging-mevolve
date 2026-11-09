@@ -4,7 +4,9 @@ import math
 
 import pytest
 
-from mevolve.search import simplify, stopping
+pytest.importorskip("radon")
+
+from mevolve.search import simplify, stopping  # noqa: E402
 
 PROGRAM = '''"""A side bias plus the last choice; no learning."""
 import jax.numpy as jnp
@@ -349,6 +351,16 @@ def test_a_dry_simplify_run_scores_every_program_and_refuses_one_below_the_floor
     cfg.write_text(json.dumps({**BASE, "results_dir": str(tmp_path / "r2"), "out_dir": str(tmp_path / "o2"),
                                "mode": "simplify", "floor": 72.2, "seed_programs": programs}))
     with pytest.raises(SystemExit, match="best0.*below the floor"):
+        run.main(["--config", str(cfg), "--dry"])
+
+    from mevolve.search.checks import ProgramRejected
+
+    def rejected(name, code, config):
+        raise ProgramRejected("9 parameters; at most 8 are allowed")
+    monkeypatch.setattr(run, "seed_metrics", rejected)                    # the search's limits were not set
+    cfg.write_text(json.dumps({**BASE, "results_dir": str(tmp_path / "r3"), "out_dir": str(tmp_path / "o3"),
+                               "mode": "simplify", "floor": 72.2, "seed_programs": programs}))
+    with pytest.raises(SystemExit, match="best0 is rejected.*max_params"):
         run.main(["--config", str(cfg), "--dry"])
 
 

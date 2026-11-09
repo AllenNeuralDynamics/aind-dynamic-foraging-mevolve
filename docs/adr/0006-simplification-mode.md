@@ -18,7 +18,8 @@ programs are simplified are study 40's decisions, not this tool's.
   0.0, as Shinka itself writes for a job without results; every consumer reads `correct` first.
 - **The floor is applied after the cache.** The evaluation script fits the program (or reads the repeat
   cache), then applies the floor (`simplify.apply_floor`). So the seed cache and the repeat cache hold the
-  search's metrics under the search's keys, and the three floor runs share every fit.
+  search's metrics under the search's keys, and the three floor runs can share every fit when they use
+  the same `seed_cache` and `stage_dir`.
 
 ## The Halstead rule (`simplify.halstead_effort`)
 
@@ -49,7 +50,8 @@ the program limits are unchanged. The literature library is left out of the prom
 `seed_programs` (program files) replace the template and the literature seeds: the first is Shinka's
 initial program on island 0, the others are placed on islands 1, 2, ..., as literature seeds are in a
 search. All are scored before the runner starts (generation 0); a seed below the floor stops the run
-before any Claude call, because its island would hold no correct program. The first is scored again by
+before any Claude call, because its island would hold no correct program; so does a seed the program
+limits reject (set `max_params` and `max_latent` to the search's). The first is scored again by
 Shinka as its initial program (once per run; a shared repeat cache makes it a hit on later floors).
 
 ## Stopping

@@ -482,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.exit(f"{results_dir} is not empty; a run starts in a fresh directory")
     results_dir.mkdir(parents=True, exist_ok=True)
     from . import claude, prompt, seeds, snapshot
+    from .checks import ProgramRejected
 
     if args.resume:
         restored = snapshot.restore(Path(config["snapshot_dir"]), results_dir)
@@ -508,7 +509,12 @@ def main(argv: list[str] | None = None) -> int:
         to_score = [] if args.resume else config["seed_programs"] if simplifying else config["seeds"]
         for island, seed in enumerate(to_score, start=0 if simplifying else 1):
             name, code = seeds.seed_name_and_source(seed)
-            metrics = seed_metrics(name, code, config)
+            try:
+                metrics = seed_metrics(name, code, config)
+            except ProgramRejected as e:
+                if not simplifying:
+                    raise
+                sys.exit(f"seed program {name} is rejected ({e}); set max_params and max_latent to the search's")
             if simplifying:
                 from .simplify import apply_floor
                 metrics, below = apply_floor(metrics, code, config["floor"], seed_effort(config))
