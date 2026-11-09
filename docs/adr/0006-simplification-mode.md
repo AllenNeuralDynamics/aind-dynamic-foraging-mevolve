@@ -52,7 +52,10 @@ initial program on island 0, the others are placed on islands 1, 2, ..., as lite
 search. All are scored before the runner starts (generation 0); a seed below the floor stops the run
 before any Claude call, because its island would hold no correct program; so does a seed the program
 limits reject (set `max_params` and `max_latent` to the search's). The first is scored again by
-Shinka as its initial program (once per run; a shared repeat cache makes it a hit on later floors).
+Shinka as its initial program (once per run; a shared repeat cache makes it a hit on later floors). If
+that second evaluation is not correct, the run stops before any proposal (`run.simplify_runner`): when
+an evaluation raises, Shinka records its initial program as correct with score 0.0, which would beat
+every −effort and anchor the stopping rule where no program can pass it.
 
 ## Stopping
 

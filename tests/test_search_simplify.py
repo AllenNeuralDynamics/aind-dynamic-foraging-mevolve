@@ -373,3 +373,35 @@ def test_the_fake_llm_rewrite_keeps_the_effort(tmp_path):
                      PROGRAM)
     assert widened != PROGRAM
     assert simplify.halstead_effort(widened) == pytest.approx(simplify.halstead_effort(PROGRAM))
+
+
+@pytest.mark.parametrize("correct, metadata, fails", [
+    (1, {}, False),
+    (1, {"evaluation_failed": True}, True),     # Shinka's fallback: correct, score 0.0, above every -effort
+    (0, {}, True),                              # scored below the floor (or failed) the second time
+])
+def test_a_simplify_run_stops_if_its_first_program_is_not_correct_in_generation_0(tmp_path, correct, metadata, fails):
+    """Shinka scores the first seed program again as its initial program. If that evaluation raises, Shinka
+    records it as correct with score 0.0, which would beat every -effort and anchor the stopping rule."""
+    import asyncio
+    import sqlite3
+
+    pytest.importorskip("shinka")
+    from mevolve.search import run
+
+    class Base:
+        results_dir = tmp_path
+
+        async def _setup_initial_program(self, code):
+            con = sqlite3.connect(tmp_path / "programs.sqlite")
+            con.execute("CREATE TABLE programs (generation INTEGER, correct INTEGER, combined_score REAL, metadata TEXT)")
+            con.execute("INSERT INTO programs VALUES (0, ?, 0.0, ?)", (correct, json.dumps(metadata)))
+            con.commit()
+            con.close()
+
+    runner = run.simplify_runner(Base)()
+    if fails:
+        with pytest.raises(RuntimeError, match="first seed program"):
+            asyncio.run(runner._setup_initial_program("code"))
+    else:
+        asyncio.run(runner._setup_initial_program("code"))

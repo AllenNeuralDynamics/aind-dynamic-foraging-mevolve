@@ -318,6 +318,8 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
     rule = stop_rule(config)
     runner_class = ShinkaEvolveRunner if rule is None else stopping_runner(ShinkaEvolveRunner)
+    if config["mode"] == "simplify":
+        runner_class = simplify_runner(runner_class)
     runner = runner_class(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
                           max_proposal_jobs=config["max_proposal_jobs"], max_db_workers=2)
     if rule is not None:
@@ -367,6 +369,27 @@ def stopping_runner(base):
             return self._stopped is not None
 
     return StoppingRunner
+
+
+def simplify_runner(base):
+    """Shinka's runner for a simplification run: after Shinka scores the first seed program again as its
+    initial program, the run stops unless that program is correct. If the evaluation raised, Shinka would
+    record it as correct with score 0.0, above every program's -effort, and the stopping rule's anchor
+    could never be beaten."""
+    class SimplifyRunner(base):
+        async def _setup_initial_program(self, code: str):
+            await super()._setup_initial_program(code)
+            con = sqlite3.connect(f"file:{Path(self.results_dir) / 'programs.sqlite'}?mode=ro", uri=True, timeout=30)
+            try:
+                bad = con.execute("SELECT COUNT(*) FROM programs WHERE generation = 0 AND (NOT correct OR "
+                                  "json_extract(metadata, '$.evaluation_failed'))").fetchone()[0]
+            finally:
+                con.close()
+            if bad:
+                raise RuntimeError("the first seed program, Shinka's initial program, failed or fell below the floor "
+                                   "when Shinka scored it again; see gen_0/results")
+
+    return SimplifyRunner
 
 
 def srun_python(results_dir: Path, stage_dir: Path, workers: int, job_args: list[str] | None = None) -> str:
