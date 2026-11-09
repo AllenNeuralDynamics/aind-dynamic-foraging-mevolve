@@ -95,20 +95,33 @@ def _die_with_parent() -> None:
         os._exit(1)
 
 
+FALLBACK_TOL = 0.005   # nats per trial; see program_score
+
+
 def program_score(records: list[dict]) -> dict:
     """A program's pooled held-out likelihood per trial from its subjects' 2-level records.
 
-    The 2-level model contains the per-subject model (spread 0), so a pooled 2-level score below
-    the pooled per-subject score means the 2-level fit failed, as it does on stepped or flat
-    likelihoods (study 12 r3: Rescorla-Wagner, LossCounting, Grossman-MetaLearning). The program
-    then keeps its per-subject score, flagged, rather than being lost to the fitter.
+    The 2-level model contains the per-subject model (spread 0), so a 2-level score below the
+    per-subject score means the 2-level fit failed, as it does on stepped or flat likelihoods (study
+    12 r3: Rescorla-Wagner, LossCounting, Grossman-MetaLearning). The fit can also fail on a single
+    mouse (#81): each mouse whose 2-level held-out log-likelihood is non-finite or falls more than
+    ``FALLBACK_TOL`` per trial below its per-subject one is scored with its per-subject fit. On
+    study 40's rescoring (51 programs x 148 mice) such gaps split into Monte Carlo misses under 0.002
+    per trial and failures from 0.005 to above 0.05, so the tolerance leaves the misses alone and does
+    not bias every score up by taking the larger of two noisy numbers. ``two_level`` and
+    ``per_subject`` stay the raw pooled scores, and ``two_level_failed`` keeps its pooled meaning
+    (the pooled 2-level score is non-finite or below the pooled per-subject one).
     """
     n = sum(r["n_trials"] for r in records)
     two_level = float(np.exp(sum(r["log_lik"] for r in records) / n))
     per_subject = float(np.exp(sum(r["per_subject_log_lik"] for r in records) / n))
     failed = not np.isfinite(two_level) or two_level < per_subject     # NaN or lower: the fit failed
-    return {"score": per_subject if failed else two_level, "two_level": two_level,
-            "per_subject": per_subject, "two_level_failed": failed}
+    fell = [not np.isfinite(r["log_lik"]) or r["log_lik"] < r["per_subject_log_lik"] - FALLBACK_TOL * r["n_trials"]
+            for r in records]
+    score = float(np.exp(sum(r["per_subject_log_lik"] if f else r["log_lik"] for r, f in zip(records, fell)) / n))
+    return {"score": score, "two_level": two_level, "per_subject": per_subject, "two_level_failed": failed,
+            "n_fallback": sum(fell),
+            "fallback_subjects": [r.get("subject_id", i) for i, (r, f) in enumerate(zip(records, fell)) if f]}
 
 
 def json_call(fn, args) -> str:

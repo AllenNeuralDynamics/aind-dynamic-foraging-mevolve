@@ -68,16 +68,25 @@ def feedback(validation: dict, generation: dict, gen_records: list[dict], bounds
     """The text Claude reads about this program."""
     import numpy as np
 
+    def fell(score: dict, who: str) -> str:
+        k = score.get("n_fallback", 0)
+        return (f" ({k} {who} mice scored with one parameter set: their 2-level fit failed)" if k else "")
+
     lines = [f"Validation score {100 * validation['score']:.3f}"
              + (" (2-level fit FAILED on the validation mice; scored with one parameter set per mouse)"
-                if validation["two_level_failed"] else ""),
+                if validation["two_level_failed"] else fell(validation, "validation")),
              f"Generation mice: score {100 * generation['score']:.3f}"
-             + (" (2-level fit failed here too)" if generation["two_level_failed"] else ""), "",
+             + (" (2-level fit failed here too)" if generation["two_level_failed"]
+                else fell(generation, f"of {len(gen_records)} generation")), "",
              "Generation mice, by stage and task (score, scored trials):"]
     if generation["two_level_failed"]:      # the details below would describe the rejected 2-level fit
         lines[-1] = ("Details by stage and task, switch probabilities and fitted parameters are omitted: the "
                      "2-level fit failed on the generation mice, and only the per-mouse fit's total score is kept.")
         return "\n".join(lines)
+    dropped = set(generation.get("fallback_subjects", []))
+    if dropped:     # their 2-level details describe a failed fit; the details use the other mice
+        gen_records = [r for r in gen_records if r.get("subject_id") not in dropped]
+        lines[-1] = f"Generation mice except the {len(dropped)} above, by stage and task (score, scored trials):"
     lines += [f"  {g:40s} {s:7.2f}  {n:>8,}" for g, (s, n) in _pooled(gen_records).items()]
     lines += ["", "Generation mice, mean |predicted - observed| switch probability (each mouse counts once):"]
     for key, label in STATS:
@@ -180,7 +189,8 @@ def evaluate_program(program_path: Path, freeze_dir: Path | None, cohorts_path: 
         "combined_score": 100 * val_score["score"],
         "public": {"validation_score": round(100 * val_score["score"], 3),
                    "generation_score": round(100 * gen_score["score"], 3),
-                   "two_level_failed": bool(val_score["two_level_failed"]), **shape},
+                   "two_level_failed": bool(val_score["two_level_failed"]),
+                   "validation_fallback_mice": val_score["n_fallback"], **shape},
         "private": {"validation": val_score, "generation": gen_score, "seconds": time.time() - t0,
                     "subject_seconds_max": max(seconds), "max_em": max_em, "n_draws": n_draws,
                     "cohorts": [generation, validation], "n_subjects": [len(gen_subjects), len(val_subjects)]},
