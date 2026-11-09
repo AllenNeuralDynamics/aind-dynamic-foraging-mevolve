@@ -16,6 +16,11 @@ prices stop before Claude 5.x); the embedding server started, if any (``--dry`` 
 literature seeds evaluated (or read from ``seed_cache``) and placed on their islands; the Claude
 shim installed; Shinka's runner built and run; then a summary
 (islands, cost from the ledger) and the copy to ``out_dir``.
+
+With ``"mode": "simplify"`` (ADR 0006) the same command runs a simplification run: ``seed_programs``
+replace the template and the literature seeds (the first is Shinka's initial program on island 0, the
+others are placed on islands 1, 2, ...), every one must score at or above ``floor``, a candidate is
+correct only at or above it, and ``combined_score`` is minus its Halstead effort.
 """
 from __future__ import annotations
 
@@ -58,13 +63,22 @@ DEFAULTS = {
     "snapshot_minutes": None, "snapshot_dir": None,     # snapshots on shared disk, for --resume (#65)
     "stop_se": None, "stop_window": None,   # stopping rule (#63): stop after stop_window proposals without the
                                             # best rising more than stop_se above its anchor; both or neither
+    "mode": "search",   # or "simplify" (ADR 0006): rewrite seed_programs to lower Halstead effort above the floor
+    "floor": None,      # simplify: the validation score (x100) a correct program must reach
+    "seed_programs": [],    # simplify: program files, one island each (the first on island 0); replaces seeds
+    "stop_window_simplify": 300,    # simplify: stop after this many proposals without a correct program
+                                    # of lower effort than the best so far
     "wandb": None,      # {"group", "name", "mode", "notes"[, "entity", "project"]} or None for no W&B
     "launch": {},       # free-form provenance copied into W&B and the summary (label, note, SHAs)
 }
 
 
+SIMPLIFY_DEFAULTS = {"library_in_prompt": False, "seeds": []}     # a simplify run's defaults that differ
+
+
 def load_config(path: Path) -> dict:
-    config = {**DEFAULTS, **json.loads(Path(path).read_text())}
+    given = json.loads(Path(path).read_text())
+    config = {**DEFAULTS, **(SIMPLIFY_DEFAULTS if given.get("mode") == "simplify" else {}), **given}
     def expand(key, value):         # e.g. "$TMPDIR/run" for node-local disk, set by the job
         out = os.path.expandvars(value)
         if "$" in out:
@@ -76,6 +90,7 @@ def load_config(path: Path) -> dict:
         if config[key]:
             config[key] = expand(key, config[key])
     config["seeds"] = [expand("seeds", s) for s in config["seeds"]]      # literature names or program files
+    config["seed_programs"] = [expand("seed_programs", s) for s in config["seed_programs"]]
     if config["simulated"]:
         if set(config["simulated"]) != {"generation", "validation"}:
             raise ValueError("simulated needs exactly generation and validation")
@@ -105,6 +120,7 @@ def load_config(path: Path) -> dict:
     if config["stop_window"] is not None and not (isinstance(config["stop_window"], int) and not isinstance(
             config["stop_window"], bool) and config["stop_window"] >= 1 and config["stop_se"] >= 0):
         raise ValueError("stop_window must be a whole number >= 1 and stop_se >= 0")
+    check_mode(config)
     if config["eval_launch"] not in ("local", "srun", "job"):
         raise ValueError(f"eval_launch is {config['eval_launch']!r}, not 'local', 'srun' or 'job'")
     if config["eval_launch"] in ("srun", "job") and not config["stage_dir"]:
@@ -129,6 +145,66 @@ def load_config(path: Path) -> dict:
     elif config["eval_launch"] == "local" and config["max_evaluation_jobs"] * config["workers"] > cpus:
         raise ValueError("max_evaluation_jobs x workers exceeds this node's CPUs")
     return config
+
+
+def check_mode(config: dict) -> None:
+    """A simplify run (ADR 0006) needs a finite ``floor`` and ``seed_programs`` (program files with
+    distinct names), stops by ``stop_window_simplify``, not the search's rule, and takes no literature
+    ``seeds``; a search run takes none of the simplify keys."""
+    if config["mode"] not in ("search", "simplify"):
+        raise ValueError(f"mode is {config['mode']!r}, not 'search' or 'simplify'")
+    if config["mode"] == "search":
+        if config["floor"] is not None or config["seed_programs"]:
+            raise ValueError("floor and seed_programs are for simplify mode (mode: \"simplify\")")
+        return
+    floor = config["floor"]
+    if not (isinstance(floor, (int, float)) and not isinstance(floor, bool) and math.isfinite(floor)):
+        raise ValueError("simplify mode needs a finite floor: the validation score (x100) to keep")
+    programs = config["seed_programs"]
+    if not programs:
+        raise ValueError("simplify mode needs seed_programs: the program files to simplify")
+    if not all(p.endswith(".py") for p in programs):
+        raise ValueError(f"seed_programs must each be a program file (.py): {programs}")
+    if len({Path(p).stem for p in programs}) != len(programs):
+        raise ValueError(f"seed_programs need distinct file names (a program is named by its stem): {programs}")
+    if config["seeds"]:
+        raise ValueError("simplify mode starts from seed_programs, not seeds")
+    if config["stop_se"] is not None or config["stop_window"] is not None:
+        raise ValueError("simplify mode stops by stop_window_simplify, not stop_se and stop_window")
+    w = config["stop_window_simplify"]
+    if not (isinstance(w, int) and not isinstance(w, bool) and w >= 1):
+        raise ValueError("stop_window_simplify must be a whole number >= 1")
+
+
+def island_seeds(config: dict) -> list[str]:
+    """The seeds ``seeds.place`` puts on islands 1, 2, ...: the literature ``seeds`` of a search, or a
+    simplify run's ``seed_programs`` after the first, which is Shinka's initial program on island 0."""
+    return config["seed_programs"][1:] if config["mode"] == "simplify" else config["seeds"]
+
+
+def initial_program(config: dict) -> str:
+    """Shinka's initial program, on island 0: the template, or a simplify run's first seed program."""
+    from .seeds import TEMPLATE, seed_name_and_source
+
+    return seed_name_and_source(config["seed_programs"][0])[1] if config["mode"] == "simplify" else TEMPLATE
+
+
+def seed_effort(config: dict) -> float:
+    """A simplify run's reference effort, shown beside each program's: the lowest Halstead effort among
+    its seed programs, the effort its first correct proposals must beat."""
+    from .seeds import seed_name_and_source
+    from .simplify import halstead_effort
+
+    return min(halstead_effort(seed_name_and_source(p)[1]) for p in config["seed_programs"])
+
+
+def stop_rule(config: dict) -> tuple[float, int] | None:
+    """(se, window) of the stopping rule, or None. A simplify run's ``combined_score`` is minus the effort
+    of a correct program, so the search's rule with se = 0 stops it after ``stop_window_simplify``
+    proposals without a correct program of lower effort than the best so far (ADR 0006)."""
+    if config["mode"] == "simplify":
+        return 0.0, int(config["stop_window_simplify"])
+    return None if config["stop_window"] is None else (float(config["stop_se"]), int(config["stop_window"]))
 
 
 def write_pricing_snapshot(results_dir: Path) -> Path:
@@ -198,11 +274,10 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
     from shinka.launch import LocalJobConfig
 
     from . import shinka_eval
-    from .seeds import TEMPLATE
 
     results_dir = Path(config["results_dir"])
     init_path = results_dir / "initial.py"
-    init_path.write_text(TEMPLATE)
+    init_path.write_text(initial_program(config))
     wandb = config["wandb"] or {}
     evo = EvolutionConfig(
         task_sys_msg=task_message, num_generations=config["n_proposals"] + 1, language="python",
@@ -236,14 +311,17 @@ def build_runner(config: dict, task_message: str, embedding_model: str | None = 
                             "generation": config["generation"], "validation": config["validation"]}),
                         "workers": config["workers"], "max_em": config["max_em"], "n_draws": config["n_draws"],
                         **({"repeat_cache": str(repeat_cache)} if config["repeat_cache"] else {}),
-                        "max_params": config["max_params"], "max_latent": config["max_latent"]})
-    db = DatabaseConfig(num_islands=1 + len(config["seeds"]), archive_size=config["archive_size"],
+                        "max_params": config["max_params"], "max_latent": config["max_latent"],
+                        **({"floor": config["floor"], "seed_effort": seed_effort(config)}
+                           if config["mode"] == "simplify" else {})})
+    db = DatabaseConfig(num_islands=1 + len(island_seeds(config)), archive_size=config["archive_size"],
                         migration_interval=config["migration_interval"], migration_rate=config["migration_rate"])
-    runner_class = ShinkaEvolveRunner if config["stop_window"] is None else stopping_runner(ShinkaEvolveRunner)
+    rule = stop_rule(config)
+    runner_class = ShinkaEvolveRunner if rule is None else stopping_runner(ShinkaEvolveRunner)
     runner = runner_class(evo, job, db, max_evaluation_jobs=config["max_evaluation_jobs"],
                           max_proposal_jobs=config["max_proposal_jobs"], max_db_workers=2)
-    if config["stop_window"] is not None:
-        runner.stop_rule = (results_dir, float(config["stop_se"]), int(config["stop_window"]))
+    if rule is not None:
+        runner.stop_rule = (results_dir, *rule)
     return runner, db
 
 
@@ -419,14 +497,26 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _terminate)       # the time limit or scancel: a last snapshot, then the end of run
 
     write_pricing_snapshot(results_dir)
+    simplifying = config["mode"] == "simplify"
     task_message = prompt.task_message(config["library_in_prompt"], tuple(config["library_exclude"]),
-                                       config["max_params"], config["max_latent"])
+                                       config["max_params"], config["max_latent"],
+                                       config["floor"] if simplifying else None)
     with embedding_server(config["embedding_python"]) as embedding_model:     # first: a bad setup fails before any fit
         placed = []
-        for island, seed in enumerate([] if args.resume else config["seeds"], start=1):     # placed before a resume
+        # placed before a resume; a simplify run also scores its first program (Shinka's initial program,
+        # scored again by the runner on island 0), so a program below the floor stops the run before any call
+        to_score = [] if args.resume else config["seed_programs"] if simplifying else config["seeds"]
+        for island, seed in enumerate(to_score, start=0 if simplifying else 1):
             name, code = seeds.seed_name_and_source(seed)
-            placed.append({"name": name, "code": code, "island": island, "metrics": seed_metrics(name, code, config)})
-            print(f"seed {name} on island {island}: {placed[-1]['metrics']['combined_score']:.3f}", flush=True)
+            metrics = seed_metrics(name, code, config)
+            if simplifying:
+                from .simplify import apply_floor
+                metrics, below = apply_floor(metrics, code, config["floor"], seed_effort(config))
+                if below or not math.isfinite(metrics["combined_score"]):
+                    sys.exit(f"seed program {name}: {below or 'not scored'}; a simplify run starts above its floor")
+            print(f"seed {name} on island {island}: {metrics['combined_score']:.3f}", flush=True)
+            if island:
+                placed.append({"name": name, "code": code, "island": island, "metrics": metrics})
         claude.install(claude.Settings(ledger=results_dir / "ledger.jsonl", effort=config["effort"],
                                        max_usd=config["max_usd"], max_tokens=config["max_tokens"],
                                        cache_prefix=task_message))
@@ -437,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         run_failed, snapshots = True, None
         try:
             if not args.resume:
-                seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(config["seeds"])), placed, embedding_model)
+                seeds.place(results_dir, DatabaseConfig(num_islands=1 + len(island_seeds(config))), placed, embedding_model)
             runner, _ = build_runner(config, task_message, embedding_model)
             if config["snapshot_minutes"] and not args.dry:
                 snapshots = snapshot.Snapshotter(results_dir, Path(config["snapshot_dir"]), config["snapshot_minutes"]).start()

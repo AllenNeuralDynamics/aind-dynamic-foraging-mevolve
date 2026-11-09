@@ -13,8 +13,10 @@ dependencies = ["numpy", "pandas", "pyarrow", "scipy", "jax", "optax>=0.2.4"]
 [project.optional-dependencies]
 test = ["pytest", "aind-dynamic-foraging-models[rl] @ git+https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-models@0c95b4b85c5f3d16c30d7dd297f3f2ee1325f112"]
 # The search engine, pinned (ADR 0001); install into its own env (mevolve-search) so a running
-# evaluator's env does not change under it.
-search = ["shinka-evolve[wandb] @ git+https://github.com/SakanaAI/ShinkaEvolve@8adc053a2ce4511ad2ac310e004c530a73fb974a"]
+# evaluator's env does not change under it. radon (a dependency of Shinka) is pinned because a
+# simplification run's score is its Halstead effort (ADR 0006).
+search = ["shinka-evolve[wandb] @ git+https://github.com/SakanaAI/ShinkaEvolve@8adc053a2ce4511ad2ac310e004c530a73fb974a",
+          "radon==6.0.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

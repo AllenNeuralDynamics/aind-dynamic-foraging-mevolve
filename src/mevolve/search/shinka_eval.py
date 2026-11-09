@@ -8,6 +8,8 @@ It writes Shinka's two files: ``correct.json`` (``correct``, ``error``) and ``me
 (``combined_score``, ``public``, ``private``, ``text_feedback``). ``combined_score`` is the
 program's score on the validation subjects (``evaluate.program_score`` of its 2-level records)
 x100, which ranks programs; the feedback comes from the generation subjects (study 40 ADR 0003).
+With ``--floor`` and ``--seed_effort`` (a simplification run, ADR 0006), a program is correct only at
+or above the floor, and ``combined_score`` is minus its Halstead effort (``simplify.apply_floor``).
 
 With ``--repeat_cache``, a program whose code repeats an earlier correct one (the same syntax tree,
 comments, formatting and docstrings aside) on the same data and settings reuses that result instead
@@ -251,15 +253,18 @@ def _cached(entry: Path) -> dict | None:
     return None
 
 
-def write_results(results_dir: Path, metrics: dict | None, error: str | None) -> bool:
-    """Shinka's ``correct.json`` and ``metrics.json``; a missing or non-finite score is incorrect."""
+def write_results(results_dir: Path, metrics: dict | None, error: str | None, keep_metrics: bool = False) -> bool:
+    """Shinka's ``correct.json`` and ``metrics.json``; a missing or non-finite score is incorrect. With
+    ``keep_metrics``, an incorrect program with a finite score keeps its metrics (a simplification
+    candidate below the floor, ADR 0006); any other incorrect program gets the failure's."""
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     score = (metrics or {}).get("combined_score")
-    correct = error is None and score is not None and math.isfinite(score)
+    scored = score is not None and math.isfinite(score)
+    correct = error is None and scored
     if error is None and not correct:
         error = f"non-finite score {score!r}"
-    if not correct:
+    if not correct and not (keep_metrics and scored):
         metrics = {"combined_score": 0.0, "public": {}, "private": {},
                    "text_feedback": f"The program failed and was not scored: {error}"}
     (results_dir / "metrics.json").write_text(json.dumps(metrics, indent=1, default=float) + "\n")
@@ -287,7 +292,12 @@ def main(argv: list[str] | None = None) -> int:
                         "is a staged copy (eval_launch srun); the repeat cache records it")
     parser.add_argument("--max_params", type=int, default=8, help="the run's program limits (#60)")
     parser.add_argument("--max_latent", type=int, default=6)
+    parser.add_argument("--floor", type=float, help="a simplification run (ADR 0006): correct only at or above "
+                        "this validation score (x100), scored by minus the Halstead effort")
+    parser.add_argument("--seed_effort", type=float, help="with --floor: the seed programs' lowest Halstead effort")
     args = parser.parse_args(argv)
+    if (args.floor is None) != (args.seed_effort is None):
+        parser.error("give both --floor and --seed_effort, or neither")
     if bool(args.simulated_generation) != bool(args.simulated_validation):
         parser.error("give both --simulated_generation and --simulated_validation, or neither")
     simulated = (args.simulated_generation, args.simulated_validation) if args.simulated_generation else None
@@ -297,10 +307,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("give --freeze, --cohorts, --generation and --validation, or the two --simulated_ files")
     from mevolve.search.checks import ProgramRejected, check_source
 
-    metrics, error, hit, key = None, None, None, None
+    metrics, error, hit, key, search_metrics, below = None, None, None, None, None, None
     try:
+        source = Path(args.program_path).read_text()
         if args.repeat_cache:
-            source = Path(args.program_path).read_text()
             key = repeat_key(source, simulated, args.freeze, args.cohorts, args.generation, args.validation,
                              args.workers, args.max_em, args.n_draws)
             hit = _cached(args.repeat_cache / f"{key}.json") if key else None
@@ -311,22 +321,28 @@ def main(argv: list[str] | None = None) -> int:
             metrics = evaluate_program(args.program_path, args.freeze, args.cohorts, args.generation,
                                        args.validation, args.workers, args.max_em, args.n_draws, simulated,
                                        args.max_params, args.max_latent)
+        search_metrics = metrics
+        if args.floor is not None:      # after the cache: it holds the search's metrics, whatever the floor
+            from mevolve.search.simplify import apply_floor
+            metrics, below = apply_floor(metrics, source, args.floor, args.seed_effort)
     except ProgramRejected as e:
         error = f"rejected by the static checks: {e}"
     except Exception as e:  # noqa: BLE001 - any failure of a candidate is a failed candidate
         error = f"{type(e).__name__}: {e}"
         traceback.print_exc()
-    correct = write_results(args.results_dir, metrics, error)
-    if key and correct and not hit:        # failures are never stored: they are evaluated again
+    correct = write_results(args.results_dir, metrics, error or below, keep_metrics=error is None and bool(below))
+    score = (search_metrics or {}).get("combined_score")
+    if (key and not hit and error is None and score is not None
+            and math.isfinite(score)):     # failures are never stored: they are evaluated again
         try:                               # best effort: a failed write must not fail a scored program
             args.repeat_cache.mkdir(parents=True, exist_ok=True)
             tmp = args.repeat_cache / f".{key}.{uuid.uuid4().hex}"     # unique on every node (the cache is shared)
-            tmp.write_text(json.dumps({"program": str(args.program_origin or args.program_path), "metrics": metrics},
-                                      default=float) + "\n")
+            tmp.write_text(json.dumps({"program": str(args.program_origin or args.program_path),
+                                      "metrics": search_metrics}, default=float) + "\n")
             tmp.replace(args.repeat_cache / f"{key}.json")
         except OSError as e:
             print(f"repeat cache: could not store the result ({e})", file=sys.stderr, flush=True)
-    print(json.dumps({"correct": correct, "error": error,
+    print(json.dumps({"correct": correct, "error": error or below,
                       "combined_score": (metrics or {}).get("combined_score")}), flush=True)
     return 0
 
