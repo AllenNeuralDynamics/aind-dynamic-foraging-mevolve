@@ -4,6 +4,8 @@ It is the same for every proposal, so the shim caches it (``claude.Settings.cach
 holds the task, the program interface, how programs are fitted and scored, what makes a good
 program, and the whole literature library as reference code (study 40 ADR 0006). Shinka appends
 the edit format after it; the parent, the inspirations and the feedback go in the user message.
+A simplification run (MEvolve ADR 0006) reads ``simplify_task`` instead: the same task, interface and scoring,
+with its own introduction, floor, notion of simple, feedback and answer.
 """
 from __future__ import annotations
 
@@ -82,6 +84,50 @@ In the DESCRIPTION, state first, in one or two sentences, the cognitive hypothes
 change. Then give the new program in the format below.
 """
 
+SIMPLIFY_INTRO = """\
+You are simplifying cognitive models of how mice make choices in a dynamic foraging task. Each \
+candidate is a short JAX program. We fit its parameters to each mouse and score how well it \
+predicts choices in sessions it was not fitted on. The programs you start from already predict \
+well. Make a program simpler, so that a neuroscientist can read and interpret it more easily, \
+while its score stays at or above a fixed floor.
+
+"""
+
+SIMPLIFY_TAIL = """\
+# The floor
+
+This run's floor is a validation score of {floor:.3f}. A program that scores at or above the \
+floor is kept, and among those the simpler program is better. A program below the floor is \
+rejected: it is never a parent. Gains and losses smaller than about 0.05 may be noise, so a small \
+slack (score minus floor) is not a safe margin.
+
+# A simpler program
+
+We measure simplicity by Halstead effort, computed from the program's code: it grows with the \
+number of arithmetic, comparison and logical operations and of the names and numbers they act on, \
+and with how many distinct ones there are. Lower is simpler. Comments and docstrings do not count, \
+so keep them clear. Make the program simpler: fewer parameters, fewer latent variables, fewer \
+operations, and plain mechanisms a neuroscientist would recognise, such as a learning rate or a \
+choice trace. Remove a mechanism that adds little to the score, merge two that do the same work, \
+or replace a parameter that always fits at the same value by that constant. The interface and \
+its limits are unchanged. At most 8 parameters and 6 latent variables are allowed, each with a \
+name; larger programs are rejected before fitting. Use `index` only for a mechanism that changes with \
+experience, never to tell sessions apart.
+
+# Feedback
+
+For each program you see its validation score, the floor, the slack, its Halstead effort beside \
+the seed program's, and its numbers of parameters and latent variables. Then come the score by \
+stage and task, its fitted parameters, and how its predicted switching departs from the mice's \
+after the same recent history. These details come from a separate group of mice, the generation \
+mice. Use them to see which mechanisms carry the fit and which can go.
+
+# Your answer
+
+In the DESCRIPTION, state first, in one or two sentences, what you removed or merged and why the \
+predictions should survive it. Then give the new program in the format below.
+"""
+
 LIBRARY_HEADER = """
 # Literature models, for reference
 
@@ -105,10 +151,19 @@ def library(exclude: tuple[str, ...] = ()) -> str:
 LIMIT_TEXT = ("# name: (low, high); at most {p}", "# at most {l}", "At most {p} parameters and {l} latent variables")
 
 
+def simplify_task(floor: float) -> str:
+    """The simplification task (MEvolve ADR 0006): the search's task, what a program sees, its interface and
+    how it is scored, with an introduction and the sections after that about simplifying above
+    ``floor``."""
+    shared = TASK[TASK.index("# The task"):TASK.index("# A good program")]
+    return SIMPLIFY_INTRO + shared + SIMPLIFY_TAIL.format(floor=floor)
+
+
 def task_message(with_library: bool = True, exclude: tuple[str, ...] = (), max_params: int = 8,
-                 max_latent: int = 6) -> str:
-    """The task, with the run's program limits (``checks.check_source``), then the library."""
-    task = TASK
+                 max_latent: int = 6, floor: float | None = None) -> str:
+    """The task (the simplification task with a ``floor``), with the run's program limits
+    (``checks.check_source``), then the library."""
+    task = TASK if floor is None else simplify_task(floor)
     for text in LIMIT_TEXT:
         old = text.format(p=8, l=6)
         assert task.count(old) == 1, old
