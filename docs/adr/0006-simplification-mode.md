@@ -74,7 +74,10 @@ are refused in simplify mode.
 | `library_in_prompt` | `false` in simplify mode | as in a search |
 
 `max_usd`, `max_em`, the model and effort, `max_params`/`max_latent` (set them to the search's, or its
-programs are rejected) and the eval launch settings work as in a search.
+programs are rejected) and the eval launch settings work as in a search. `n_proposals` still caps the
+run (default 10): set it well above `stop_window_simplify`, as the search sets it above `stop_window`.
+The seed program files are read again on `--resume` (Shinka's initial program and the reference
+effort), so keep them on shared disk, for example in the study's variant directory.
 
 ## Considered options
 
