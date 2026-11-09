@@ -96,7 +96,14 @@ def test_program_score_falls_back_for_a_non_finite_mouse():
     c = {"subject_id": "c", "log_lik": -60.0, "per_subject_log_lik": -64.0, "n_trials": 100}
     s = evaluate.program_score([a, c])
     assert s["score"] == pytest.approx(np.exp((-65.0 - 60.0) / 200)) and s["fallback_subjects"] == ["a"]
-    assert s["two_level_failed"]                        # the pooled 2-level score is NaN
+    assert not s["two_level_failed"] and not np.isfinite(s["two_level"])   # one NaN mouse does not fail the program
+
+
+def test_program_score_keeps_the_per_subject_score_when_the_2_level_fit_is_lower_everywhere():
+    # every mouse a little below its per-mouse fit (inside the tolerance): a systematic failure, not noise
+    recs = [{"subject_id": k, "log_lik": -65.3, "per_subject_log_lik": -65.0, "n_trials": 100} for k in "abc"]
+    s = evaluate.program_score(recs)
+    assert s["two_level_failed"] and s["n_fallback"] == 0 and s["score"] == s["per_subject"]
 
 
 def test_program_score_falls_back_when_the_two_level_fit_scores_lower():

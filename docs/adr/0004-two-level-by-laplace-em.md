@@ -54,8 +54,10 @@ program's pooled score by up to 0.25 (×100), against differences of 0.01 to 0.0
 So each mouse whose 2-level log-likelihood is non-finite or more than 0.005 nats per trial below its
 per-subject one is scored with its per-subject fit (``evaluate.FALLBACK_TOL``). The tolerance leaves
 the misses alone, so the score is not biased up by taking the larger of two noisy numbers for every
-mouse. The pooled ``two_level_failed`` flag keeps its meaning; the feedback names the fallen-back mice
-and leaves them out of the generation diagnostics. Searches started before this change keep their
+mouse. If the result is still below the pooled per-subject score (a 2-level fit a little worse on every
+mouse, as on flat likelihoods) or every mouse fell back, the program keeps its pooled per-subject score
+and ``two_level_failed`` is set, as before; one failed mouse no longer sets it. The feedback names the
+fallen-back mice and leaves them out of the generation diagnostics. Searches started before this change keep their
 scores; the change applies from the next search and to every reported score (Han approved the
 change, 2026-11-08; the tolerance comes from the rescoring data above).
 
