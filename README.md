@@ -83,6 +83,15 @@ rule is met, no new proposals start; running evaluations and Claude calls finish
 under the dollar cap, and `stop_rule.json` (and `run_summary.json`) say the rule ended the run. The rule
 is read from the database each time (`mevolve.search.stopping`), so a resumed run gets the same answer.
 
+**Simplification runs** (`"mode": "simplify"`, `floor`, `seed_programs`, `stop_window_simplify`;
+[ADR 0006](docs/adr/0006-simplification-mode.md), #83). The same `python -m mevolve.search.run --config
+run.json` rewrites `seed_programs` (program files; the first on island 0) to be simpler. A candidate is
+correct only if its validation score (×100, the search's evaluator) is at or above `floor`, and it is
+ranked by minus its Halstead effort. Every seed program must reach the floor, or the run stops before
+any Claude call; set `max_params` and `max_latent` to the search's limits. The run stops after
+`stop_window_simplify` proposals (default 300) without a correct program of lower effort, or at
+`max_usd`. Each floor is its own run; the floors are study 40's.
+
 **Snapshots and resume** (`snapshot_minutes`, `snapshot_dir`, `--resume`; #65). The database lives on the
 first node's local disk until the end of the run. With `snapshot_minutes`, a consistent copy of it
 (SQLite's backup API), the run's small files (ledger, bandit state, configs) and every settled `gen_*`

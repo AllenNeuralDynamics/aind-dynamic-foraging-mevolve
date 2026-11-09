@@ -134,5 +134,19 @@ A sub-population of programs evolved apart from the others, with occasional migr
 One evolution: one ShinkaEvolve run, one launch, one W&B run.
 _Avoid_: experiment, sweep
 
+**Simplification run**:
+A search run that rewrites given programs to be simpler: a candidate counts only if its score is at or
+above the run's floor, and among those a lower Halstead effort is better (ADR 0006).
+_Avoid_: pruning, distillation
+
+**Floor**:
+The validation score a simplification run's programs must keep, one per run; study 40 sets it.
+_Avoid_: threshold (that names a literature model's mechanism)
+
+**Halstead effort**:
+A program's size and difficulty in one number, from its operators and operands; docstrings and comments
+do not count (ADR 0006 gives the exact rule).
+_Avoid_: complexity (too broad)
+
 **Gate**:
 A check that must pass before the next build step or any spending.
