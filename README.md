@@ -4,8 +4,9 @@ LLM-driven evolutionary discovery of interpretable cognitive models of mouse dyn
 The M stands for mice and for models; the repo pairs with
 [`aind-dynamic-foraging-models`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-models).
 
-**Status: building.** Every settled decision is recorded in [`docs/adr/`](docs/adr/) with its
-vocabulary in [`CONTEXT.md`](CONTEXT.md); the build order is study 40's `PLAN.md`.
+**Status: round 1 done; scientist mode proposed.** Search and simplification modes have run study 40's
+first round (results below). A third mode, scientist mode, is proposed in #87. Every settled decision
+is recorded in [`docs/adr/`](docs/adr/) with its vocabulary in [`CONTEXT.md`](CONTEXT.md).
 
 ## Use
 
@@ -121,6 +122,52 @@ The scientific question, the comparisons and the results live in
 [`aind-dynamic-foraging-bfm-studies`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies)
 ([issue 73](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/issues/73)).
 This repo holds the tool.
+
+## Preliminary results (study 40, round 1)
+
+The source is study 40's reports at studies commit `3f724cb`; numbers here are quoted from them. r5
+is a draft.
+
+- **The search** ([r2](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/reports/r2-search-curve.md)) ran 2,562 proposals in 42 hours for $209
+  of Claude API (Opus 5.5).
+  - It climbed +0.167 (likelihood ×100) above the best literature model, Miller-RHG, on the
+    validation mice, nearly all of it in the first 500 proposals.
+  - The top programs share a core: counterfactual update, forgetting of the unchosen side, and fast
+    and slow habits. They differ in add-ons (satiety, engagement, experience, reward rate, bait).
+  - On 100 mice the search never used, the early gain holds; the late gain does not.
+- **On the test mice** ([r3](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/reports/r3-search-best.md)), the program chosen on the selection
+  mice, `satiety_engagement`, closes **0.59 of the gap from HB-CTT to the GRU** (95% CI 0.53 to 0.64,
+  on the 146 test mice shared with the GRU).
+  - About half of that comes from the fitting regime: Miller-RHG fitted the same way (2-level EM)
+    already closes 0.30.
+  - Its mouse-average behaviour curves beat Miller-RHG's, but the GRU stays best on 8 of the 9.
+- **Simplification** ([r4](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/reports/r4-simplification.md)) cut Halstead effort from 2,634 to
+  403 and 107 while keeping 0.55 and 0.53 of the gap. No program met the 90% floor.
+- **Individual differences** ([r5](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/reports/r5-individual-differences.md), draft): the top
+  programs fit some mice better than others, stably across session halves (r 0.53).
+  - Each add-on helps about half of the mice and hurts the rest, so pooled scores tie.
+  - Choosing a program per mouse gains little on unseen sessions (+0.19 mnats per trial, CI −0.14 to
+    +0.51).
+
+![Test subjects: gap closed from HB-CTT to the GRU, with paired standard errors](https://raw.githubusercontent.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/fig_r3_test.svg)
+
+*Gap closed on the test subjects ([r3](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/reports/r3-search-best.md), [`fig_r3_test.svg`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/fig_r3_test.svg)).*
+
+![Simplification: fit against Halstead effort](https://raw.githubusercontent.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/fig_r4_frontier.svg)
+
+*Fit against complexity at three floors ([r4](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/reports/r4-simplification.md), [`fig_r4_frontier.svg`](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/blob/3f724cb821a92b8d1aee3e827b5435cd724ff45e/studies/40-cognitive-llm-discovery/analysis/fig_r4_frontier.svg)).*
+
+**What round 1 taught the tool.**
+1. A pooled score saturates early.
+2. Near-ties between programs reflect real but small differences between mice (r5).
+3. Choosing the winner on fixed validation mice does not carry over well to other mice.
+
+The next step is therefore not a longer search but a different mode: scientist mode (#87; ADR 0007
+proposed). A Claude agent forms claims about the mice, tests them on discovery mice, has them
+attacked by a reviewer, and confirms them on mice it never used. Its first user is study 41, mouse
+strategy profiles ([studies #149](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/issues/149)).
+Its residuals will come from study 17's cross-validated GRU map
+([studies #148](https://github.com/AllenNeuralDynamics/aind-dynamic-foraging-bfm-studies/issues/148)).
 
 ## Where it sits
 
