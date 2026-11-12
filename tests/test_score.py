@@ -33,8 +33,11 @@ def test_max_em_reaches_the_two_level_fit():
     rec, = evaluate.evaluate(path, [_subject(0)], regime="2level", n_draws=8, n_starts=2, workers=1, max_em=2)
     assert 1 <= rec["em_iterations"] <= 2 and isinstance(rec["converged"], bool)
     for key in ("log_lik", "n_trials", "fit_log_lik", "session_ids", "session_groups", "session_log_lik",
-                "session_n_trials", "typical_params", "log_sigma", "ess", "fingerprints"):
+                "session_n_trials", "typical_params", "log_sigma", "ess", "fingerprints",
+                "session_per_subject_log_lik"):
         assert key in rec
+    assert len(rec["session_per_subject_log_lik"]) == len(rec["session_log_lik"])
+    assert np.isclose(sum(rec["session_per_subject_log_lik"]), rec["per_subject_log_lik"])
 
 
 def test_score_cli_records_pools_provenance_and_the_reported_em_cap(tmp_path, monkeypatch):
