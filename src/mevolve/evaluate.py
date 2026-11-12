@@ -68,6 +68,7 @@ def _evaluate_one(args) -> dict:
         ps_ll, _ = scoring.point_scores(prog, f.x, score_batch)
         out.update({"typical_params": f.typical_params, "log_sigma": np.asarray(f.log_sigma).tolist(),
                     "per_subject_log_lik": float(ps_ll[: len(data.score)].sum()),
+                    "session_per_subject_log_lik": ps_ll[: len(data.score)].tolist(),
                     "ess": m["ess"][: len(data.score)].tolist(),
                     "em_iterations": f.em_iterations, "converged": f.converged})
     k = len(data.score)
