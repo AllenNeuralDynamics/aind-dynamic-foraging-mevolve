@@ -73,7 +73,7 @@ session with a fresh context that starts from the lab notebook.
 |---|---|---|---|
 | `explore(script)` | Runs a Python script the scientist wrote in a separate process with MEvolve's isolation (#40): it reads only the discovery data view and Python's libraries, has no network and no subprocesses, and has time and memory limits. Returns its printed output and its figures (PNG), so the scientist sees the plots. | discovery | first |
 | `evaluate(program, mice)` | Checks the program as the search does (`search.checks`). Fits it per mouse with `mevolve.evaluate.evaluate` (2-level EM with the per-mouse fallback, ADR 0004) in one Slurm job. Returns the pooled score, per-session held-out log-likelihoods (2-level and per subject, #85), MEvolve's replay fingerprints and the per-mouse parameters; saves per-trial p(right) for `residuals`. | discovery | first; rollout fingerprints second |
-| `residuals(program, reference)` | The per-trial log-likelihood gap between a program and a reference, by mouse, session, task variant, training stage and trial position after a block change. The reference is another evaluated program, or the GRU once its per-trial predictions exist (below). | discovery | first (program reference) |
+| `residuals(program, reference)` | The per-trial log-likelihood gap between a program and a reference, by mouse, session, task variant and training stage; by trial position after a block change in the second build (below). The reference is another evaluated program, or the GRU once its per-trial predictions exist (below). | discovery | first (program reference) |
 | `register_claim(...)` | Writes a claim to the registry (next section) and runs its checks on discovery mice. | discovery | first |
 | `review_verdict(claim_id, verdict, reasons)` | The reviewer's verdict; refused from anyone but the reviewer. | — | first |
 | `confirm(claim_id)` | One look at the confirmation mice for a registered, reviewed, approved claim. | confirmation | first |
@@ -81,7 +81,10 @@ session with a fresh context that starts from the lab notebook.
 | `shinka_polish(hypothesis, program)` | A short search-mode run around one idea (see "Later"). | discovery | later |
 
 Rollout fingerprints (each fitted program plays the task, scored with study 15's fingerprint library)
-come in the second build, by the pattern of study 40's `analysis/freeze_selection.py`. Studies #149's
+come in the second build, by the pattern of study 40's `analysis/freeze_selection.py`. So does trial
+position after a block change: the freeze keeps only choices and rewards (`freeze.py`), so the second
+build adds each trial's reward probabilities to the discovery view, for analysis only, never as a
+program input. Studies #149's
 definition of understanding asks a model to generate realistic behaviour, so study 41's first real run
 needs them.
 
@@ -124,22 +127,27 @@ The guard has three layers, all code:
    id.
 3. **Tool checks.** `explore`, `evaluate` and `residuals` refuse any mouse outside discovery. `confirm`
    runs only for a claim that is registered, reviewed `not_broken` and approved, within the look cap.
-   A claim's check functions run in the same isolated process as `explore` scripts (no file writes,
-   no network, no subprocesses), on the view the tool passes them; only the tool's own code writes the
-   result. So `confirm` returns only the claim's statistics, their intervals and pass or fail, and no
-   per-mouse value reaches the agent directory.
+   A claim's check functions never run in the harness's process: in both `register_claim` and
+   `confirm` they run in the same isolated process as `explore` scripts (no file writes, no network,
+   no subprocesses), on the view the tool passes them, and must return one finite number, which the
+   tool validates; only the tool's own code writes it down. `confirm` returns nothing about the result
+   to the agent (next section), so no confirmation value reaches the agent directory.
 
 The tests of the first build (#87, second box) show each layer refusing:
 
 - the discovery view holds no confirmation, excluded or test mouse;
-- `Read`, `Glob` and `Grep` on the freeze, the confirmation list or a symlink to them are refused;
+- `Read`, `Glob` and `Grep` on the freeze, the confirmation list, `confirm/` or a symlink to them are
+  refused;
   `Bash` is not available;
 - `Write` and `Edit` on a claim, review, look, budget or approval file are refused;
 - an `explore` script that opens the freeze fails with the isolation's `PermissionError`, and so does a
-  claim's check function that opens a path or writes a file;
+  claim's check function that opens a path or writes a file, in `register_claim` and in `confirm`; a
+  check that returns anything but one finite number is refused;
 - `evaluate`, `explore` and `residuals` with a confirmation or test mouse are refused;
 - `review_verdict` from the scientist is refused, and so are a reviewer brief that is more than a
   claim id and an `Agent` call for any other subagent type;
+- two tool calls at once whose jobs together need more node-hours than are left: the second is
+  refused;
 - `confirm` is refused for a claim that is unregistered, changed since registration, unreviewed,
   reviewed `broken`, unapproved, past the look cap, or uses GRU predictions before studies #148's map
   exists.
@@ -178,9 +186,16 @@ the claim's programs on those mice (the same evaluator, in Slurm jobs) and keeps
 by the program's sha256. Claims that rest on the same program reuse its fit, so node-hours grow with the
 number of programs, not of looks; a fit on 315 mice costs about 3× a program in r5. Each statistic gets a
 bootstrap interval over mice at confidence 1 − `look_alpha` / `max_looks` (Bonferroni over the study's
-whole look budget). The claim passes only if both intervals lie on the claimed side of their criteria.
-Every look goes to `looks.jsonl`, failures too, and the report counts them all. A claim gets one look; a
-revised claim spends a new one.
+whole look budget). The claim passes only if both intervals lie on the claimed side of their criteria. A
+claim gets one look; a revised claim spends a new one.
+
+**Looks are sealed (Han).** The scientist never sees a look's result. `confirm` writes it to
+`confirm/results.jsonl`, outside the agent directory, for Han; the agent's `looks.jsonl` records only
+that the look is spent. So every claim is chosen from discovery data alone, the looks do not adapt to one
+another, and the Bonferroni bound over `max_looks` holds. Every look is recorded, failures too, and the
+report counts them all. Showing results to the scientist would let later claims adapt to the same 315
+mice, and then no simple correction holds; if Han releases results, later claims need new mice (for
+example mice recorded after the snapshot, studies #149's strongest test).
 
 **Han approves each look (Han).** After a `not_broken` review, `confirm` returns "awaiting approval"
 and the scientist goes on with other work. Han approves by creating `approvals/<claim_id>`; the next
@@ -198,10 +213,10 @@ and the scientist goes on with other work. Han approves by creating `approvals/<
 | `agent/claims/<id>.json` | `register_claim` | claims and their discovery results |
 | `agent/reviews/<id>.md` | `review_verdict` | verdicts and reasons |
 | `agent/approvals/<id>` | Han | approved looks |
-| `agent/looks.jsonl` | `confirm` | every look and its result |
+| `agent/looks.jsonl` | `confirm` | which looks are spent; no results |
 | `agent/budget.jsonl` | harness | dollars and node-hours spent |
 | `agent/episodes/NNN.md` | `end_episode` | episode summaries |
-| `confirm/` | `confirm` | the confirmation work (outside the agent directory) |
+| `confirm/` | `confirm` | fits on confirmation mice and `results.jsonl`, the looks' results, for Han (outside the agent directory) |
 | `claude_config/` | the SDK | `CLAUDE_CONFIG_DIR`: transcripts (outside the agent directory) |
 
 The run directory is on shared disk, outside any git checkout: the agents write to it often. The smoke
@@ -219,9 +234,12 @@ One ledger, `budget.jsonl`, sums three costs:
 - **node-hours**: each Slurm job's elapsed time × its CPUs / 112 (one aind node), from `sacct`.
 
 Each episode runs with the SDK's `max_budget_usd` set to the smaller of `max_usd_episode` and the
-dollars left, so the SDK stops it at the cap. The hook refuses `evaluate` and `confirm` when the
-node-hours left are below the job's request (CPUs × time limit), so no job can overrun. The harness
-stops when either cap is spent.
+dollars left, so the SDK stops it at the cap. Node-hours are reserved before a job is submitted: under
+a lock on the ledger, a tool writes a reservation for the job's full request (CPUs × time limit), and
+the balance counts every open reservation as spent. A tool refuses a job, or a `confirm` all of its
+fits, if the reservation does not fit, so tool calls that run at once cannot each spend the same
+node-hours. When a job ends, is cancelled or is found by `sacct` after a restart, its reservation is
+closed and replaced by its elapsed cost. The harness stops when either cap is spent.
 
 ## Config (`run.json`)
 
@@ -243,7 +261,7 @@ stops when either cap is spent.
 | `look_alpha` | 0.05 **(Han)** | family-wise error over `max_looks` |
 | `eval_job_args` | — | `srun` options of the evaluation jobs |
 | `gru_reference` | null | per-trial GRU predictions with sha256 and their kind (`in_sample` or `cross_validated`) |
-| `wandb` | null | as in search mode; the project is the study's decision |
+| `wandb` | null | as in search mode: entity `NeuralDynamics`, project `dfbfm-mevolve` (ADR 0003). Study 41 has asked Han about its own project instead; that would amend ADR 0003 |
 
 For scale: r5 fitted 17 programs on 100 mice in 17 jobs of 56 CPUs, 10 to 40 minutes each, about 4
 node-hours in all.
@@ -257,8 +275,8 @@ node-hours in all.
    discovery and the validation cohort in confirmation, so no real confirmation mouse is read. It passes
    if the second episode starts from the first's notes and every refusal of the tier guard shows in the
    log.
-4. **Second build**: rollout fingerprints in `evaluate`; GRU references in `residuals` once predictions
-   exist.
+4. **Second build**: rollout fingerprints in `evaluate`; reward probabilities in the data view and
+   block position in `residuals`; GRU references in `residuals` once predictions exist.
 5. Handed to study 41 for its first run.
 
 ## Later

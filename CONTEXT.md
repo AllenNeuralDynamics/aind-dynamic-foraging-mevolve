@@ -190,6 +190,6 @@ a direction and a criterion; immutable once registered (its id is the sha256 of 
 _Avoid_: finding (a claim becomes a finding only if it passes its look), hypothesis (not yet registered)
 
 **Look**:
-One run of a claim's checks on all confirmation mice, once; every look is recorded, failures too, and a
-study has a fixed number of them.
+One run of a claim's checks on all confirmation mice, once. Its result is sealed from the scientist agent;
+every look is recorded, failures too, and a study has a fixed number of them.
 _Avoid_: test (that names the test tier), validation

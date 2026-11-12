@@ -21,7 +21,7 @@ digraph S {
     resid [label="residuals(program, reference)"];
     reg [label="register_claim(...)\nmodel and model-free checks"];
     verdict [label="review_verdict(claim_id, ...)\nreviewer only"];
-    confirm [label="confirm(claim_id)\nreviewed, approved, within the cap", fillcolor="#fff3d6"];
+    confirm [label="confirm(claim_id)\nreviewed, approved, within the cap\nresult sealed: to Han only", fillcolor="#fff3d6"];
   }
 
   subgraph cluster_mice {
