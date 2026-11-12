@@ -108,9 +108,10 @@ trial.
 
 The lists are study 41's, frozen in its `reference/tiers.json` with the freeze manifest's sha256. MEvolve
 does not draw them. The run config names that file and its sha256; the harness refuses to start if the
-file's sha256 or its freeze manifest sha256 does not match, if any two tiers share a mouse, or if the
-tiers and the excluded mice together are not exactly the freeze's two pools (614 + 149), so no mouse is
-left out unseen.
+file's sha256 or its freeze manifest sha256 does not match, or unless each pool is split exactly:
+discovery, confirmation and the excluded mice must partition the freeze's training pool (614), and the
+test tier must equal its held-out pool (149). So no mouse is left out unseen, and no held-out mouse can
+be swapped into discovery.
 
 The guard has three layers, all code:
 
@@ -148,6 +149,7 @@ The tests of the first build (#87, second box) show each layer refusing:
   claim id and an `Agent` call for any other subagent type;
 - two tool calls at once whose jobs together need more node-hours than are left: the second is
   refused;
+- a tier file that swaps one discovery mouse with one held-out mouse is refused at start;
 - `confirm` is refused for a claim that is unregistered, changed since registration, unreviewed,
   reviewed `broken`, unapproved, past the look cap, or uses GRU predictions before studies #148's map
   exists.
@@ -183,11 +185,13 @@ confound of r5's caveat, a check that does not test the statement, a criterion c
 
 A **look** is one run of a claim's two checks on all 315 confirmation mice, once. `confirm` first fits
 the claim's programs on those mice (the same evaluator, in Slurm jobs) and keeps each fit in `confirm/`
-by the program's sha256. Claims that rest on the same program reuse its fit, so node-hours grow with the
-number of programs, not of looks; a fit on 315 mice costs about 3× a program in r5. Each statistic gets a
-bootstrap interval over mice at confidence 1 − `look_alpha` / `max_looks` (Bonferroni over the study's
-whole look budget). The claim passes only if both intervals lie on the claimed side of their criteria. A
-claim gets one look; a revised claim spends a new one.
+under a key like the search's repeat cache (`shinka_eval.repeat_key`): the program's code, the freeze
+manifest, the tier file, the fit settings and the evaluator's source digest. Claims that rest on the same
+program reuse its fit only if all of these match, so node-hours grow with the number of programs, not of
+looks; a fit on 315 mice costs about 3× a program in r5. Each statistic gets a bootstrap interval over
+mice at confidence 1 − `look_alpha` / `max_looks` (Bonferroni over the study's whole look budget). The
+claim passes only if both intervals lie on the claimed side of their criteria. A claim gets one look; a
+revised claim spends a new one.
 
 **Looks are sealed (Han).** The scientist never sees a look's result. `confirm` writes it to
 `confirm/results.jsonl`, outside the agent directory, for Han; the agent's `looks.jsonl` records only
