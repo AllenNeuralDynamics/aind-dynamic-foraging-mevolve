@@ -207,7 +207,7 @@ mice, and then no simple correction holds; if Han releases results, later claims
 example mice recorded after the snapshot, studies #149's strongest test).
 
 **Han approves each look (Han).** After a `not_broken` review, `confirm` returns "awaiting approval"
-and the scientist goes on with other work. Han approves by creating `approvals/<claim_id>`; the next
+and the scientist goes on with other work. Han approves by creating `agent/approvals/<claim_id>`; the next
 `confirm` call on that claim runs the look.
 
 ## Lab notebook
@@ -281,9 +281,9 @@ node-hours in all.
 2. **First build**: the tier-file checks, the data view, the tools marked "first", the hooks, the
    notebook, the tests above.
 3. **Smoke run**: $10 and 5 node-hours, two episodes. A stand-in tier file puts the generation cohort in
-   discovery and the validation cohort in confirmation, so no real confirmation mouse is read. It passes
-   if the second episode starts from the first's notes and every refusal of the tier guard shows in the
-   log.
+   discovery, the validation cohort in confirmation and every other training-pool mouse in excluded, so
+   it passes the pool checks and no real confirmation mouse is read. It passes if the second episode
+   starts from the first's notes and every refusal of the tier guard shows in the log.
 4. **Second build**: rollout fingerprints in `evaluate`; reward probabilities in the data view and
    block position in `residuals`; GRU references in `residuals` once predictions exist.
 5. Handed to study 41 for its first run.
