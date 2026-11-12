@@ -88,8 +88,11 @@ needs them.
 **GRU residuals.** No per-trial GRU predictions exist for training-pool mice. The GRU v2 H128 (study
 01) was trained on all 614 of them, so its predictions on discovery mice would be in-sample. If the
 study makes such predictions, `residuals` labels them "in-sample, pointer only". `confirm` refuses a
-claim whose checks use GRU predictions until the cross-validated GRU map (studies #148) exists for the
-confirmation mice.
+claim whose checks use GRU predictions until the cross-validated GRU map exists for the confirmation
+mice: study 17 (`17-gru-crossfit-predictability`, studies #148 and #151). The GRU's held-out protocol
+scores every other session (`eval_every_n=2`), so `residuals` refuses a GRU reference whose scored
+sessions are not the freeze's score sessions (`role == "score"`): the two must line up trial by
+trial.
 
 ## Mouse tiers and the tier guard
 
@@ -102,7 +105,9 @@ confirmation mice.
 
 The lists are study 41's, frozen in its `reference/tiers.json` with the freeze manifest's sha256. MEvolve
 does not draw them. The run config names that file and its sha256; the harness refuses to start if the
-file's sha256 or its freeze manifest sha256 does not match, or if any two tiers share a mouse.
+file's sha256 or its freeze manifest sha256 does not match, if any two tiers share a mouse, or if the
+tiers and the excluded mice together are not exactly the freeze's two pools (614 + 149), so no mouse is
+left out unseen.
 
 The guard has three layers, all code:
 
@@ -169,10 +174,12 @@ confound of r5's caveat, a check that does not test the statement, a criterion c
   which needs its own review.
 
 A **look** is one run of a claim's two checks on all 315 confirmation mice, once. `confirm` first fits
-the claim's programs on those mice (the same evaluator, in Slurm jobs). Each statistic gets a bootstrap
-interval over mice at confidence 1 − `look_alpha` / `max_looks` (Bonferroni over the study's whole
-look budget). The claim passes only if both intervals lie on the claimed side of their criteria. Every
-look goes to `looks.jsonl`, failures too, and the report counts them all. A claim gets one look; a
+the claim's programs on those mice (the same evaluator, in Slurm jobs) and keeps each fit in `confirm/`
+by the program's sha256. Claims that rest on the same program reuse its fit, so node-hours grow with the
+number of programs, not of looks; a fit on 315 mice costs about 3× a program in r5. Each statistic gets a
+bootstrap interval over mice at confidence 1 − `look_alpha` / `max_looks` (Bonferroni over the study's
+whole look budget). The claim passes only if both intervals lie on the claimed side of their criteria.
+Every look goes to `looks.jsonl`, failures too, and the report counts them all. A claim gets one look; a
 revised claim spends a new one.
 
 **Han approves each look (Han).** After a `not_broken` review, `confirm` returns "awaiting approval"
