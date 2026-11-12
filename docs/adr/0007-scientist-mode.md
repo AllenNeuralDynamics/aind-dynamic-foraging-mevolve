@@ -114,10 +114,15 @@ The guard has three layers, all code:
    `Grep` and `Agent` (for the reviewer); no `Bash` and no web tools. A `PreToolUse` hook resolves
    every path (symlinks too) and refuses any path outside the agent directory, and any write to a file
    the tools or Han own (claims, reviews, looks, budget, approvals, `QUESTION.md`, the data view). It
-   also refuses an `Agent` call to the reviewer whose prompt is anything but a registered claim id.
+   refuses an `Agent` call for any subagent type but `reviewer` (the CLI's built-in types carry their
+   own tools, `Bash` among them), and a reviewer call whose prompt is anything but a registered claim
+   id.
 3. **Tool checks.** `explore`, `evaluate` and `residuals` refuse any mouse outside discovery. `confirm`
    runs only for a claim that is registered, reviewed `not_broken` and approved, within the look cap.
-   It returns only the claim's statistics, their intervals and pass or fail, never per-mouse values.
+   A claim's check functions run in the same isolated process as `explore` scripts (no file writes,
+   no network, no subprocesses), on the view the tool passes them; only the tool's own code writes the
+   result. So `confirm` returns only the claim's statistics, their intervals and pass or fail, and no
+   per-mouse value reaches the agent directory.
 
 The tests of the first build (#87, second box) show each layer refusing:
 
@@ -125,12 +130,14 @@ The tests of the first build (#87, second box) show each layer refusing:
 - `Read`, `Glob` and `Grep` on the freeze, the confirmation list or a symlink to them are refused;
   `Bash` is not available;
 - `Write` and `Edit` on a claim, review, look, budget or approval file are refused;
-- an `explore` script that opens the freeze fails with the isolation's `PermissionError`;
+- an `explore` script that opens the freeze fails with the isolation's `PermissionError`, and so does a
+  claim's check function that opens a path or writes a file;
 - `evaluate`, `explore` and `residuals` with a confirmation or test mouse are refused;
-- `review_verdict` from the scientist is refused, and so is a reviewer brief that is more than a claim
-  id;
+- `review_verdict` from the scientist is refused, and so are a reviewer brief that is more than a
+  claim id and an `Agent` call for any other subagent type;
 - `confirm` is refused for a claim that is unregistered, changed since registration, unreviewed,
-  reviewed `broken`, unapproved, past the look cap, or uses GRU predictions before studies #148's map exists.
+  reviewed `broken`, unapproved, past the look cap, or uses GRU predictions before studies #148's map
+  exists.
 
 ## Claims, the reviewer and confirmation
 
@@ -155,8 +162,9 @@ confound of r5's caveat, a check that does not test the statement, a criterion c
 - The scientist passes it only the claim id; the hook refuses any other brief. The reviewer reads the
   claim, its evidence and its code from the notebook itself, so the scientist cannot frame the
   evidence.
-- Its tools: `Read`, `Glob` and `Grep` on the agent directory, `explore` (discovery mice) and
-  `review_verdict`. The hook accepts `review_verdict` only when `agent_type` is `reviewer`.
+- Its tools are exactly `Read`, `Glob` and `Grep` on the agent directory, `explore` (discovery mice)
+  and `review_verdict`: no `Write`, no `Agent`. The hook accepts `review_verdict` only when
+  `agent_type` is `reviewer`.
 - A `broken` verdict, with reasons, blocks the claim. The scientist may register a revised claim,
   which needs its own review.
 
