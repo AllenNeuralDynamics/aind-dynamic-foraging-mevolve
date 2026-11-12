@@ -132,7 +132,10 @@ The guard has three layers, all code:
    `confirm` they run in the same isolated process as `explore` scripts (no file writes, no network,
    no subprocesses), on the view the tool passes them, and must return one finite number, which the
    tool validates; only the tool's own code writes it down. `confirm` returns nothing about the result
-   to the agent (next section), so no confirmation value reaches the agent directory.
+   to the agent (next section), so no confirmation value reaches the agent directory. Every worker that
+   runs agent-written code (`explore` scripts, check functions, programs) starts with an environment
+   free of API keys (`ANTHROPIC_API_KEY`, `WANDB_API_KEY`), removed before that code loads, as
+   `shinka_eval.main` does; the isolation alone does not clear inherited variables.
 
 The tests of the first build (#87, second box) show each layer refusing:
 
@@ -141,6 +144,8 @@ The tests of the first build (#87, second box) show each layer refusing:
   refused;
   `Bash` is not available;
 - `Write` and `Edit` on a claim, review, look, budget or approval file are refused;
+- with a stand-in key in the loop's environment, no `explore` script, check function or program can
+  read it;
 - an `explore` script that opens the freeze fails with the isolation's `PermissionError`, and so does a
   claim's check function that opens a path or writes a file, in `register_claim` and in `confirm`; a
   check that returns anything but one finite number is refused;
