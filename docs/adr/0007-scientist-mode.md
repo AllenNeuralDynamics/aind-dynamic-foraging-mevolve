@@ -7,7 +7,7 @@ issue or PR in that repo.
 
 Search mode optimises one pooled score. Study 40 showed that this score saturates (round 1) and that its
 top programs tie because each add-on helps some mice and hurts others (r5). Study 41, the strategy
-study (`41-cognitive-strategy-profiles`, studies #149 and PR #150), asks a different question: what is
+study (`41-cognitive-strategy-profiles`, studies #149 and #150), asks a different question: what is
 each mouse's strategy, and why do mice differ? That needs a scientist's loop, not an optimiser: look
 where models fail, form a hypothesis, test it, have it attacked, and confirm it once on mice that were
 not used to find it.
@@ -130,7 +130,7 @@ The tests of the first build (#87, second box) show each layer refusing:
 - `review_verdict` from the scientist is refused, and so is a reviewer brief that is more than a claim
   id;
 - `confirm` is refused for a claim that is unregistered, changed since registration, unreviewed,
-  reviewed `broken`, unapproved, past the look cap, or uses GRU predictions before #148's map exists.
+  reviewed `broken`, unapproved, past the look cap, or uses GRU predictions before studies #148's map exists.
 
 ## Claims, the reviewer and confirmation
 
