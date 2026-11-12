@@ -150,3 +150,46 @@ _Avoid_: complexity (too broad)
 
 **Gate**:
 A check that must pass before the next build step or any spending.
+
+### Scientist mode
+
+**Scientist mode**:
+MEvolve's third mode (`"mode": "scientist"`, ADR 0007): a Claude agent forms hypotheses about the mice,
+tests them with MEvolve's tools, and confirms registered claims once on mice not used to find them.
+Search mode, which optimises one score, does not change.
+_Avoid_: MEvolve 2.0 (it is not a newer search), harness alone (search mode has one too)
+
+**Scientist agent**:
+The Claude agent that runs scientist mode's loop. Its own term because *agent* alone is on the
+_Avoid_ list of **program**: a program is never an agent here.
+_Avoid_: agent alone, optimiser
+
+**Reviewer**:
+A second agent, started by the scientist agent with a fresh context, that tries to break a claim before
+it may be confirmed; only it can record a verdict.
+_Avoid_: critic, judge
+
+**Episode**:
+One session of the scientist agent with a fresh context, opened from the lab notebook.
+_Avoid_: run (a run holds many episodes), generation
+
+**Lab notebook**:
+The run's files: notes, tool results, claims, reviews, looks, budget and episode summaries. It, not the
+agent's context, carries the work from episode to episode.
+_Avoid_: memory, log
+
+**Tier**:
+A set of mice with a rule for who may read it: **discovery** (study 40's four cohorts; read freely
+through the tools), **confirmation** (the rest of the training pool; read only inside `confirm`) and
+**test** (the held-out pool; no tool reads it). The using study commits the lists.
+_Avoid_: cohort (a cohort is one named subject set inside a tier), split
+
+**Claim**:
+A registered statement about the mice with a model check and a model-free check, each a statistic with
+a direction and a criterion; immutable once registered (its id is the sha256 of its contents).
+_Avoid_: finding (a claim becomes a finding only if it passes its look), hypothesis (not yet registered)
+
+**Look**:
+One run of a claim's checks on all confirmation mice, once. Its result is sealed from the scientist agent;
+every look is recorded, failures too, and a study has a fixed number of them.
+_Avoid_: test (that names the test tier), validation

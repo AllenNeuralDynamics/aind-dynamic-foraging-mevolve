@@ -1,0 +1,48 @@
+// MEvolve ADR 0007: scientist mode. Render: dot -Tsvg 0007-scientist-mode.dot -o 0007-scientist-mode.svg
+digraph S {
+  graph [rankdir=LR, fontname="Arial", fontsize=11, nodesep=0.3, ranksep=0.55, pad=0.2];
+  node  [fontname="Arial", fontsize=10, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Arial", fontsize=9, color="#555555"];
+
+  han [label="Han\nsets the question and caps\napproves each look", fillcolor="#fde9c9"];
+
+  subgraph cluster_job {
+    label="Scientist mode: Claude Agent SDK, one Slurm job on aind"; style="rounded"; color="#0072B2"; fontcolor="#0072B2";
+    sci [label="Scientist agent\nepisodes: explore, hypothesise,\nevaluate, register, review, confirm", fillcolor="#d6eaf8"];
+    rev [label="Reviewer subagent\nfresh context; reads the claim itself;\ntries to break it", fillcolor="#d6eaf8"];
+    hook [label="PreToolUse hook (code)\nfiles only in agent/; no shell\nverdict only from the reviewer\nbudget: $ and node-hours", fillcolor="#eeeeee"];
+    note [label="Lab notebook: agent/\nnotes · results · claims · reviews\nlooks · budget · episode summaries", shape=folder, fillcolor="#f6f6f6"];
+  }
+
+  subgraph cluster_tools {
+    label="MCP tools (MEvolve code)"; style="rounded"; color="#009E73"; fontcolor="#009E73";
+    explore [label="explore(script)\nisolated process"];
+    evalt [label="evaluate(program, mice)\n2-level EM in a Slurm job"];
+    resid [label="residuals(program, reference)"];
+    reg [label="register_claim(...)\nmodel and model-free checks"];
+    verdict [label="review_verdict(claim_id, ...)\nreviewer only"];
+    confirm [label="confirm(claim_id)\nreviewed, approved, within the cap\nresult sealed: to Han only", fillcolor="#fff3d6"];
+  }
+
+  subgraph cluster_mice {
+    label="Mouse tiers (study 41 reference/tiers.json)"; style="rounded"; color="#D55E00"; fontcolor="#D55E00";
+    disc [label="Discovery 296\ndata view in agent/", fillcolor="#e8f6ee"];
+    conf [label="Confirmation 315\nonly inside confirm", fillcolor="#fff3d6"];
+    test [label="Test 149\nno tool reads it", fillcolor="#f9dede"];
+  }
+
+  out [label="Claims replicated on\nconfirmation mice\n→ study 41 reports", shape=note, fillcolor="#fde9c9"];
+
+  {rank=same; han; hook}
+  han -> sci [label="question"];
+  hook -> sci [style=dashed, label="allow / refuse"];
+  sci -> note [dir=both];
+  sci -> rev [label="claim id"];
+  sci -> explore; sci -> evalt; sci -> resid; sci -> reg; sci -> confirm;
+  rev -> verdict;
+  explore -> disc; evalt -> disc; resid -> disc; reg -> disc;
+  confirm -> conf;
+  han -> confirm [label="approval", style=dashed];
+  confirm -> out;
+  test -> out [style=dotted, label="study 41, once, at the end"];
+}
